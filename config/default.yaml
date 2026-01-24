@@ -1,0 +1,44 @@
+# SFL Configuration - Default Settings
+# Override via environment variables (SFL_*) or CLI arguments
+
+federation:
+  # Number of federated clients participating
+  num_clients: 2
+  
+  # Number of federated learning rounds
+  num_rounds: 1
+  
+  # Minimum clients required to start a round
+  min_available_clients: 2
+  
+  # Minimum clients required for fit aggregation
+  min_fit_clients: 2
+
+client:
+  # Base value for client secrets (node_id is added to this)
+  base_secret: 7.0
+
+server:
+  # Initial model parameter value
+  initial_param: 0.0
+
+nvflare:
+  # Job name for NVFlare
+  job_name: "sfl-federated-sum"
+  
+  # Enable TensorBoard metrics streaming
+  stream_metrics: false
+  
+  # Number of threads for simulation
+  num_threads: null  # Defaults to num_clients if not set
+
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: INFO
+  
+  # Log format: rich, simple, json
+  format: rich
+  
+  # Enable file logging
+  file_enabled: false
+  file_path: "./logs/sfl.log"

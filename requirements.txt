@@ -1,0 +1,26 @@
+# SFL - Simple Federated Learning Demo
+# Pinned dependencies for reproducibility
+# Generated: 2026-01-24
+
+# Core Federated Learning Frameworks
+# IMPORTANT: NVFlare 2.7.1 requires Flower 1.17+ for full CLI compatibility
+nvflare==2.7.1
+flwr[simulation]==1.17.0
+
+# CLI Dependencies
+# IMPORTANT: Click must be < 8.2 to avoid Typer compatibility issues
+click>=8.1.0,<8.2.0
+typer>=0.12.0
+
+# Numerical Computing
+numpy>=1.21.0,<2.0.0
+
+# Simulation Backend
+ray>=2.31.0
+
+# Configuration Management
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# Logging & Utilities
+rich>=13.0.0  # Beautiful terminal output

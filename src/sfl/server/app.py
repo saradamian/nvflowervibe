@@ -1,0 +1,96 @@
+"""
+Federated learning server application.
+
+This module provides the server-side application for Flower,
+configured with the SumFedAvg strategy for federated sum aggregation.
+"""
+
+import numpy as np
+from flwr.common import Context, ndarrays_to_parameters
+from flwr.server import ServerApp, ServerAppComponents, ServerConfig
+
+from sfl.server.strategy import SumFedAvg
+from sfl.utils.logging import get_logger
+from sfl.utils.config import get_config
+
+logger = get_logger(__name__)
+
+
+def server_fn(context: Context) -> ServerAppComponents:
+    """Create and configure the federated learning server.
+    
+    This function is called by Flower's ServerApp to initialize
+    the server with the appropriate strategy and configuration.
+    
+    Configuration sources (priority order):
+    1. context.run_config (from Flower/NVFlare)
+    2. SFL configuration (from YAML/env)
+    3. Defaults
+    
+    Args:
+        context: Flower context containing run_config.
+    
+    Returns:
+        ServerAppComponents with strategy and config.
+    
+    Example:
+        >>> from flwr.common import Context
+        >>> context = Context(node_id=0, run_config={})
+        >>> components = server_fn(context)
+        >>> print(type(components.strategy))
+        <class 'sfl.server.strategy.SumFedAvg'>
+    """
+    logger.info("Initializing federated server")
+    
+    # Get configuration from multiple sources
+    run_config = context.run_config or {}
+    
+    try:
+        sfl_config = get_config()
+        default_rounds = sfl_config.federation.num_rounds
+        default_clients = sfl_config.federation.num_clients
+        default_min_clients = sfl_config.federation.min_fit_clients
+        initial_param = sfl_config.server.initial_param
+    except Exception:
+        # Fall back to defaults if config not available
+        default_rounds = 1
+        default_clients = 2
+        default_min_clients = 2
+        initial_param = 0.0
+    
+    # Get values from run_config or use SFL config defaults
+    num_rounds = int(run_config.get("num-server-rounds", default_rounds))
+    num_clients = int(run_config.get("num-clients", default_clients))
+    min_fit_clients = int(run_config.get("min-fit-clients", default_min_clients))
+    
+    logger.info(
+        f"Server config: rounds={num_rounds}, "
+        f"clients={num_clients}, min_fit={min_fit_clients}"
+    )
+    
+    # Create initial parameters
+    initial_params = ndarrays_to_parameters(
+        [np.array([initial_param], dtype=np.float32)]
+    )
+    
+    # Create strategy
+    strategy = SumFedAvg(
+        min_fit_clients=min_fit_clients,
+        min_available_clients=num_clients,
+        initial_parameters=initial_params,
+        log_client_values=True,
+    )
+    
+    # Create server config
+    config = ServerConfig(num_rounds=num_rounds)
+    
+    logger.info("Server initialized successfully")
+    
+    return ServerAppComponents(
+        strategy=strategy,
+        config=config,
+    )
+
+
+# Create the Flower ServerApp
+app = ServerApp(server_fn=server_fn)
