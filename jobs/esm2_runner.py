@@ -132,8 +132,52 @@ def run_flower(args: argparse.Namespace, logger) -> int:
     return 0
 
 
+def _write_esm2_pyproject(staging_dir: Path, args) -> None:
+    """Write a pyproject.toml that points Flower at the ESM2 apps."""
+    content = f"""\
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sfl-esm2"
+version = "0.1.0"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sfl"]
+
+[tool.flwr.app]
+publisher = "sfl-demo"
+
+[tool.flwr.app.components]
+serverapp = "sfl.esm2:server_app"
+clientapp = "sfl.esm2:client_app"
+
+[tool.flwr.app.config]
+num-server-rounds = {args.num_rounds}
+num-clients = {args.num_clients}
+esm2-model = "{args.model}"
+learning-rate = {args.learning_rate}
+local-epochs = {args.local_epochs}
+batch-size = {args.batch_size}
+max-length = {args.max_length}
+
+[tool.flwr.federations]
+default = "local-simulation"
+
+[tool.flwr.federations.local-simulation]
+options.num-supernodes = {args.num_clients}
+address = "127.0.0.1:9093"
+insecure = true
+"""
+    (staging_dir / "pyproject.toml").write_text(content)
+
+
 def run_nvflare(args: argparse.Namespace, logger) -> int:
     """Run ESM2 FL training using NVFlare FlowerRecipe."""
+    import shutil
+    import tempfile
+
     try:
         from nvflare.app_opt.flower.recipe import FlowerRecipe
         from nvflare.recipe.sim_env import SimEnv
@@ -148,21 +192,33 @@ def run_nvflare(args: argparse.Namespace, logger) -> int:
         logger.error(f"pyproject.toml not found in {content_dir}")
         return 1
 
-    logger.info("Starting NVFlare SimEnv for ESM2 FL...")
+    # Stage only needed files (avoids copying .git/, .venv/, etc.)
+    staging_dir = Path(tempfile.mkdtemp(prefix="sfl_esm2_nvflare_"))
+    try:
+        shutil.copytree(content_dir / "src", staging_dir / "src")
+        if (content_dir / "config").exists():
+            shutil.copytree(content_dir / "config", staging_dir / "config")
 
-    recipe = FlowerRecipe(
-        flower_content=str(content_dir),
-        name="esm2-federated-mlm",
-        min_clients=args.num_clients,
-    )
+        # Write a pyproject.toml that points Flower at ESM2 apps
+        _write_esm2_pyproject(staging_dir, args)
 
-    env = SimEnv(
-        num_clients=args.num_clients,
-        num_threads=args.num_clients,
-    )
+        logger.info("Starting NVFlare SimEnv for ESM2 FL...")
 
-    recipe.execute(env=env)
-    return 0
+        recipe = FlowerRecipe(
+            flower_content=str(staging_dir),
+            name="esm2-federated-mlm",
+            min_clients=args.num_clients,
+        )
+
+        env = SimEnv(
+            num_clients=args.num_clients,
+            num_threads=args.num_clients,
+        )
+
+        recipe.execute(env=env)
+        return 0
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
 
 
 def main() -> int:
