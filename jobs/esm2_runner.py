@@ -62,6 +62,18 @@ Examples:
     parser.add_argument("--max-length", type=int, default=128,
                         help="Max token sequence length (default: 128)")
 
+    # Dataset
+    parser.add_argument("--dataset", type=str, default=None,
+                        help="HuggingFace dataset name (default: built-in demo)")
+    parser.add_argument("--sequence-column", type=str, default="sequence",
+                        help="Column name for protein sequences (default: sequence)")
+    parser.add_argument("--max-samples", type=int, default=None,
+                        help="Max samples to load from dataset (default: all)")
+
+    # Output
+    parser.add_argument("--save-dir", type=str, default=None,
+                        help="Directory to save final model (default: no save)")
+
     # Logging
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Enable DEBUG logging")
@@ -75,6 +87,26 @@ Examples:
                         help="Simulation backend (default: flower)")
 
     return parser.parse_args()
+
+
+def _save_final_model(args: argparse.Namespace, logger) -> None:
+    """Save the trained model after FL completes.
+
+    Loads the model, which in simulation picks up the last state,
+    and saves weights + tokenizer to save_dir.
+    """
+    from sfl.esm2.model import load_model, load_tokenizer
+
+    save_path = Path(args.save_dir)
+    save_path.mkdir(parents=True, exist_ok=True)
+
+    model = load_model(args.model)
+    tokenizer = load_tokenizer(args.model)
+
+    model.save_pretrained(save_path)
+    tokenizer.save_pretrained(save_path)  # type: ignore[union-attr]
+
+    logger.info(f"Model and tokenizer saved to {save_path}")
 
 
 def _set_esm2_config(args: argparse.Namespace) -> None:
@@ -92,6 +124,10 @@ def _set_esm2_config(args: argparse.Namespace) -> None:
         local_epochs=args.local_epochs,
         batch_size=args.batch_size,
         max_length=args.max_length,
+        dataset_name=args.dataset,
+        sequence_column=args.sequence_column,
+        max_samples=args.max_samples,
+        save_dir=args.save_dir,
     ))
 
 
@@ -132,6 +168,11 @@ def run_flower(args: argparse.Namespace, logger) -> int:
             }
         },
     )
+
+    # Save final model if requested
+    if args.save_dir:
+        _save_final_model(args, logger)
+
     return 0
 
 
@@ -164,6 +205,9 @@ learning-rate = {args.learning_rate}
 local-epochs = {args.local_epochs}
 batch-size = {args.batch_size}
 max-length = {args.max_length}
+dataset-name = "{args.dataset or ''}"
+sequence-column = "{args.sequence_column}"
+max-samples = {args.max_samples if args.max_samples else 0}
 
 [tool.flwr.federations]
 default = "local-simulation"
@@ -240,6 +284,8 @@ def main() -> int:
     logger.info(f"Local epochs:  {args.local_epochs}")
     logger.info(f"Learning rate: {args.learning_rate}")
     logger.info(f"Batch size:    {args.batch_size}")
+    logger.info(f"Dataset:       {args.dataset or 'built-in demo (32 seqs)'}")
+    logger.info(f"Save dir:      {args.save_dir or 'none'}")
     logger.info(f"Backend:       {args.backend}")
     logger.info("-" * 60)
 

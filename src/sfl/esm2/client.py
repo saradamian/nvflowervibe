@@ -24,7 +24,12 @@ from sfl.esm2.model import (
     load_tokenizer,
     set_parameters,
 )
-from sfl.esm2.dataset import load_demo_dataset, partition_dataset
+from sfl.esm2.dataset import (
+    load_demo_dataset,
+    load_dataset_from_hub,
+    partition_dataset,
+    split_train_eval,
+)
 from sfl.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -63,6 +68,9 @@ class ESM2Client(BaseFederatedClient):
         batch_size: int = 4,
         max_length: int = 128,
         device: str | None = None,
+        dataset_name: str | None = None,
+        sequence_column: str = "sequence",
+        max_samples: int | None = None,
     ) -> None:
         resolved_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         super().__init__(client_id=client_id, device=resolved_device)
@@ -75,20 +83,38 @@ class ESM2Client(BaseFederatedClient):
         self.model = load_model(model_name).to(self.device)  # type: ignore[assignment]
         self.tokenizer = load_tokenizer(model_name)
 
-        # Load and partition dataset
-        full_dataset = load_demo_dataset(
-            tokenizer=self.tokenizer,
-            max_length=max_length,
-        )
+        # Load dataset — HuggingFace Hub or built-in demo
+        if dataset_name:
+            full_dataset = load_dataset_from_hub(
+                dataset_name=dataset_name,
+                tokenizer=self.tokenizer,
+                sequence_column=sequence_column,
+                max_samples=max_samples,
+                max_length=max_length,
+            )
+        else:
+            full_dataset = load_demo_dataset(
+                tokenizer=self.tokenizer,
+                max_length=max_length,
+            )
+
+        # Split train/eval, then partition across clients
+        train_split, eval_split = split_train_eval(full_dataset)
         self.train_data = partition_dataset(
-            full_dataset,
+            train_split,
+            num_partitions=num_partitions,
+            partition_id=partition_id,
+        )
+        self.eval_data = partition_dataset(
+            eval_split,
             num_partitions=num_partitions,
             partition_id=partition_id,
         )
 
         logger.info(
             f"ESM2Client {client_id} ready: partition={partition_id}, "
-            f"samples={len(self.train_data)}, device={self.device}"
+            f"train={len(self.train_data)}, eval={len(self.eval_data)}, "
+            f"device={self.device}"
         )
 
     def get_parameters(self, config: Config) -> Parameters:
@@ -137,10 +163,10 @@ class ESM2Client(BaseFederatedClient):
         parameters: Parameters,
         config: Config,
     ) -> Tuple[float, int, Metrics]:
-        """Evaluate the model on local data.
+        """Evaluate the model on held-out eval data.
 
         Overrides BaseFederatedClient's default no-op evaluation
-        with actual model evaluation on the local partition.
+        with actual model evaluation on the local eval partition.
 
         Args:
             parameters: Global model parameters from the server.
@@ -151,8 +177,10 @@ class ESM2Client(BaseFederatedClient):
         """
         set_parameters(self.model, parameters)
 
-        loss = self._evaluate()
-        num_examples = len(self.train_data)
+        # Use eval split if available, fall back to train data
+        eval_dataset = self.eval_data if len(self.eval_data) > 0 else self.train_data
+        loss = self._evaluate(eval_dataset)
+        num_examples = len(eval_dataset)
 
         logger.info(
             f"Client {self.client_id}: evaluate — loss={loss:.4f}"
@@ -194,15 +222,20 @@ class ESM2Client(BaseFederatedClient):
         return total_loss / max(total_batches, 1)
 
     @torch.no_grad()
-    def _evaluate(self) -> float:
+    def _evaluate(self, dataset=None) -> float:
         """Run evaluation loop.
+
+        Args:
+            dataset: Dataset to evaluate on (defaults to train_data).
 
         Returns:
             Average loss over all batches.
         """
+        if dataset is None:
+            dataset = self.train_data
         self.model.eval()
         loader = DataLoader(
-            self.train_data,
+            dataset,
             batch_size=self.batch_size,
         )
 
@@ -261,6 +294,14 @@ def client_fn(context: Context) -> Client:
         f"model={model_name}"
     )
 
+    # Dataset config
+    dataset_name = run_config.get("dataset-name", cfg.dataset_name)
+    if dataset_name is not None:
+        dataset_name = str(dataset_name)
+    sequence_column = str(run_config.get("sequence-column", cfg.sequence_column))
+    max_samples_raw = run_config.get("max-samples", cfg.max_samples)
+    max_samples = int(max_samples_raw) if max_samples_raw is not None else None
+
     client = ESM2Client(
         client_id=node_id,
         partition_id=partition_id,
@@ -270,6 +311,9 @@ def client_fn(context: Context) -> Client:
         local_epochs=local_epochs,
         batch_size=batch_size,
         max_length=max_length,
+        dataset_name=dataset_name,
+        sequence_column=sequence_column,
+        max_samples=max_samples,
     )
 
     return client.to_client()

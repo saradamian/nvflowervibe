@@ -28,6 +28,14 @@ class ESM2RunConfig:
     batch_size: int = 4
     max_length: int = 128
 
+    # Dataset — empty means use built-in demo sequences
+    dataset_name: Optional[str] = None
+    sequence_column: str = "sequence"
+    max_samples: Optional[int] = None
+
+    # Output
+    save_dir: Optional[str] = None
+
     # Convenience properties — delegate to FederationConfig
     @property
     def num_clients(self) -> int:

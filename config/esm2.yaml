@@ -21,10 +21,18 @@ esm2:
   batch_size: 4
   max_length: 128
 
-  # Dataset (leave empty to use built-in demo sequences)
-  # dataset_name: "some/hf-dataset"
-  # sequence_column: "sequence"
-  # max_samples: 1000
+  # Dataset — leave empty to use built-in demo sequences (32 seqs)
+  # For real training, use a HuggingFace dataset:
+  #   dataset_name: "uniref50"        # HF dataset identifier
+  #   sequence_column: "sequence"      # column with protein sequences
+  #   max_samples: 10000              # limit samples (null = all)
+  dataset_name: null
+  sequence_column: "sequence"
+  max_samples: null
+
+  # Output — directory to save final aggregated model
+  # save_dir: "./outputs/esm2_run"
+  save_dir: null
 
 logging:
   level: INFO
