@@ -12,7 +12,9 @@ Usage:
 """
 
 import argparse
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -211,26 +213,34 @@ def main() -> int:
     # Create NVFlare recipe
     num_threads = config.nvflare.num_threads or config.federation.num_clients
     
-    logger.info("Creating NVFlare FlowerRecipe...")
-    recipe = FlowerRecipe(
-        flower_content=str(content_dir),
-        name=config.nvflare.job_name,
-        min_clients=config.federation.num_clients,
-    )
-    
-    # Create simulation environment
-    logger.info(f"Creating SimEnv with {config.federation.num_clients} clients, "
-                f"{num_threads} threads...")
-    env = SimEnv(
-        num_clients=config.federation.num_clients,
-        num_threads=num_threads,
-    )
-    
-    # Execute the job
-    logger.info("Starting federated learning simulation...")
-    logger.info("-" * 60)
-    
+    # Stage only the files NVFlare needs into a clean temp directory
+    # (avoids copying .git/, .venv/, __pycache__, etc.)
+    staging_dir = Path(tempfile.mkdtemp(prefix="sfl_nvflare_"))
     try:
+        shutil.copy(content_dir / "pyproject.toml", staging_dir)
+        shutil.copytree(content_dir / "src", staging_dir / "src")
+        if (content_dir / "config").exists():
+            shutil.copytree(content_dir / "config", staging_dir / "config")
+
+        logger.info("Creating NVFlare FlowerRecipe...")
+        recipe = FlowerRecipe(
+            flower_content=str(staging_dir),
+            name=config.nvflare.job_name,
+            min_clients=config.federation.num_clients,
+        )
+    
+        # Create simulation environment
+        logger.info(f"Creating SimEnv with {config.federation.num_clients} clients, "
+                    f"{num_threads} threads...")
+        env = SimEnv(
+            num_clients=config.federation.num_clients,
+            num_threads=num_threads,
+        )
+    
+        # Execute the job
+        logger.info("Starting federated learning simulation...")
+        logger.info("-" * 60)
+    
         recipe.execute(env=env)
         logger.info("-" * 60)
         logger.info("Simulation completed successfully!")
@@ -239,6 +249,8 @@ def main() -> int:
         logger.error(f"Simulation failed: {e}")
         logger.exception("Full traceback:")
         return 1
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":
