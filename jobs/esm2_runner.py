@@ -109,6 +109,15 @@ def run_flower(args: argparse.Namespace, logger) -> int:
 
     logger.info("Starting Flower simulation for ESM2 FL...")
 
+    # Detect GPU availability and allocate to clients
+    try:
+        import torch
+        num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    except ImportError:
+        num_gpus = 0
+
+    gpus_per_client = num_gpus / args.num_clients if num_gpus > 0 else 0.0
+
     run_simulation(
         server_app=server_app,
         client_app=client_app,
@@ -116,7 +125,7 @@ def run_flower(args: argparse.Namespace, logger) -> int:
         backend_config={
             "client_resources": {
                 "num_cpus": 1,
-                "num_gpus": 0.0,
+                "num_gpus": gpus_per_client,
             }
         },
     )
