@@ -15,6 +15,81 @@ from sfl.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+
+def partition_dataset(
+    dataset: Dataset,
+    num_partitions: int,
+    partition_id: int,
+) -> Subset:
+    """Partition a dataset into non-overlapping IID subsets.
+
+    Splits dataset indices evenly across partitions. If the dataset
+    size isn't perfectly divisible, earlier partitions get one extra sample.
+
+    Args:
+        dataset: Full dataset to partition.
+        num_partitions: Number of partitions to create.
+        partition_id: Index of the partition to return (0-based).
+
+    Returns:
+        A Subset containing this partition's samples.
+
+    Raises:
+        ValueError: If partition_id is out of range or num_partitions < 1.
+    """
+    if num_partitions < 1:
+        raise ValueError(f"num_partitions must be >= 1, got {num_partitions}")
+    if partition_id < 0 or partition_id >= num_partitions:
+        raise ValueError(
+            f"partition_id {partition_id} out of range for {num_partitions} partitions"
+        )
+
+    n = len(dataset)  # type: ignore[arg-type]
+    indices = list(range(n))
+
+    # Split as evenly as possible
+    chunk_size = n // num_partitions
+    remainder = n % num_partitions
+
+    start = partition_id * chunk_size + min(partition_id, remainder)
+    end = start + chunk_size + (1 if partition_id < remainder else 0)
+
+    partition_indices = indices[start:end]
+    logger.info(
+        f"Partition {partition_id}/{num_partitions}: "
+        f"{len(partition_indices)} samples (indices {start}–{end - 1})"
+    )
+    return Subset(dataset, partition_indices)
+
+
+def split_train_eval(
+    dataset: Dataset,
+    eval_fraction: float = 0.1,
+    seed: int = 42,
+) -> Tuple[Subset, Subset]:
+    """Split a dataset into train and eval subsets.
+
+    Args:
+        dataset: Dataset to split.
+        eval_fraction: Fraction of data to use for evaluation (0.0-0.5).
+        seed: Random seed for reproducible split.
+
+    Returns:
+        Tuple of (train_subset, eval_subset).
+    """
+    n = len(dataset)  # type: ignore[arg-type]
+    eval_size = max(1, int(n * eval_fraction))
+    train_size = n - eval_size
+
+    generator = torch.Generator().manual_seed(seed)
+    indices = torch.randperm(n, generator=generator).tolist()
+
+    train_indices = indices[:train_size]
+    eval_indices = indices[train_size:]
+
+    logger.info(f"Split dataset: {train_size} train, {eval_size} eval")
+    return Subset(dataset, train_indices), Subset(dataset, eval_indices)
+
 # Representative protein sequences for demo/testing when no external dataset
 # is available. These are short, real protein family motifs.
 DEMO_SEQUENCES: List[str] = [
@@ -196,44 +271,3 @@ def load_dataset_from_hub(
         max_length=max_length,
         mask_probability=mask_probability,
     )
-
-
-def partition_dataset(
-    dataset: ProteinMLMDataset,
-    num_partitions: int,
-    partition_id: int,
-) -> Subset:
-    """Partition a dataset for federated learning (IID split).
-
-    Divides the dataset into roughly equal, non-overlapping partitions.
-
-    Args:
-        dataset: Full dataset to partition.
-        num_partitions: Total number of FL clients.
-        partition_id: This client's partition index (0-based).
-
-    Returns:
-        Subset of the dataset for this client.
-
-    Raises:
-        ValueError: If partition_id is out of range.
-    """
-    if partition_id < 0 or partition_id >= num_partitions:
-        raise ValueError(
-            f"partition_id {partition_id} out of range [0, {num_partitions})"
-        )
-
-    total = len(dataset)
-    partition_size = total // num_partitions
-    remainder = total % num_partitions
-
-    # Distribute remainder across first partitions
-    start = partition_id * partition_size + min(partition_id, remainder)
-    end = start + partition_size + (1 if partition_id < remainder else 0)
-
-    indices = list(range(start, end))
-    logger.info(
-        f"Partition {partition_id}/{num_partitions}: "
-        f"{len(indices)} samples (indices {start}–{end - 1})"
-    )
-    return Subset(dataset, indices)
