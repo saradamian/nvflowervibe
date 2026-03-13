@@ -10,6 +10,7 @@ Run automatically on PR to main via CI.
 
 import tempfile
 from pathlib import Path
+from typing import List, Tuple, Union
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -23,6 +24,7 @@ from flwr.common import (
     ndarrays_to_parameters,
     parameters_to_ndarrays,
 )
+from flwr.server.client_proxy import ClientProxy
 
 from sfl.client.base import BaseFederatedClient
 from sfl.client.sum_client import SumClient
@@ -44,11 +46,11 @@ def _make_fit_result(value: float) -> FitRes:
     )
 
 
-def _make_client_proxy(cid: str) -> MagicMock:
+def _make_client_proxy(cid: str) -> ClientProxy:
     """Build a mock ClientProxy with a given client id."""
-    proxy = MagicMock()
+    proxy = MagicMock(spec=ClientProxy)
     proxy.cid = cid
-    return proxy
+    return proxy  # type: ignore[return-value]
 
 
 # ── Client → Parameters flow ───────────────────────────────────────────────
@@ -145,6 +147,7 @@ class TestSumAggregation:
         aggregated = strategy.aggregate_fit(
             server_round=1, results=results, failures=[]
         )
+        assert aggregated is not None
         params, _ = aggregated
         arrays = parameters_to_ndarrays(params)
         assert len(arrays) == 1
@@ -219,7 +222,9 @@ class TestEndToEndPipeline:
         results = [
             (_make_client_proxy("0"), _make_fit_result(7.0)),
         ]
-        failures = [Exception("client 1 failed")]
+        failures: List[Union[Tuple[ClientProxy, FitRes], BaseException]] = [
+            BaseException("client 1 failed"),
+        ]
 
         aggregated = strategy.aggregate_fit(
             server_round=1, results=results, failures=failures
@@ -299,6 +304,7 @@ class TestStrategyEdgeCases:
             server_round=1, results=[], failures=[]
         )
         # With no clients, sum is 0
+        assert aggregated is not None
         _, metrics = aggregated
         assert metrics["federated_sum"] == 0
         assert metrics["num_clients"] == 0

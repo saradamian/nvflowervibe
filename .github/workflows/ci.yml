@@ -1,7 +1,9 @@
-name: CI — Tests on PR
+name: CI - Tests on PR
 
 on:
   pull_request:
+    branches: [main]
+  push:
     branches: [main]
 
 permissions:
