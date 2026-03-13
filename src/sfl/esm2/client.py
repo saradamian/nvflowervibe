@@ -1,19 +1,22 @@
 """
 ESM2 federated learning client.
 
-Implements a Flower NumPyClient that fine-tunes an ESM2 protein language
+Implements a Flower client that fine-tunes an ESM2 protein language
 model on a local partition of protein sequences using masked language modeling.
+
+Extends BaseFederatedClient from the core SFL framework, implementing
+compute_update() for training and overriding evaluate() for evaluation.
 """
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Tuple
 
-import numpy as np
 import torch
-from numpy.typing import NDArray
 from torch.utils.data import DataLoader
-from flwr.client import Client, NumPyClient
+from flwr.client import Client
 from flwr.common import Context
 
+from sfl.client.base import BaseFederatedClient
+from sfl.types import Parameters, Metrics, Config, ClientUpdate
 from sfl.esm2.model import (
     DEFAULT_MODEL_NAME,
     get_parameters,
@@ -27,8 +30,11 @@ from sfl.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-class ESM2Client(NumPyClient):
+class ESM2Client(BaseFederatedClient):
     """Flower client for federated ESM2 fine-tuning.
+
+    Extends BaseFederatedClient, implementing compute_update() for
+    local training and overriding evaluate() for model evaluation.
 
     Each client holds a local partition of protein sequences and trains
     an ESM2 model via masked language modeling. Model parameters are
@@ -58,16 +64,15 @@ class ESM2Client(NumPyClient):
         max_length: int = 128,
         device: str | None = None,
     ) -> None:
-        super().__init__()
-        self.client_id = client_id
+        resolved_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        super().__init__(client_id=client_id, device=resolved_device)
         self.partition_id = partition_id
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.learning_rate = learning_rate
         self.local_epochs = local_epochs
         self.batch_size = batch_size
 
         # Load model and tokenizer
-        self.model: EsmForMaskedLM = load_model(model_name).to(self.device)  # type: ignore[assignment]
+        self.model = load_model(model_name).to(self.device)  # type: ignore[assignment]
         self.tokenizer = load_tokenizer(model_name)
 
         # Load and partition dataset
@@ -86,16 +91,19 @@ class ESM2Client(NumPyClient):
             f"samples={len(self.train_data)}, device={self.device}"
         )
 
-    def get_parameters(self, config: Dict[str, Any]) -> List[NDArray[np.float32]]:
+    def get_parameters(self, config: Config) -> Parameters:
         """Return current model parameters."""
         return get_parameters(self.model)
 
-    def fit(
+    def compute_update(
         self,
-        parameters: List[NDArray[np.float32]],
-        config: Dict[str, Any],
-    ) -> Tuple[List[NDArray[np.float32]], int, Dict[str, Any]]:
+        parameters: Parameters,
+        config: Config,
+    ) -> ClientUpdate:
         """Train the model on local data for one FL round.
+
+        Implements the BaseFederatedClient contract: receive global
+        parameters, train locally, return updated parameters.
 
         Args:
             parameters: Global model parameters from the server.
@@ -111,7 +119,7 @@ class ESM2Client(NumPyClient):
         train_loss = self._train()
         num_examples = len(self.train_data)
 
-        metrics = {
+        metrics: Metrics = {
             "client_id": self.client_id,
             "train_loss": train_loss,
             "num_examples": num_examples,
@@ -126,10 +134,13 @@ class ESM2Client(NumPyClient):
 
     def evaluate(
         self,
-        parameters: List[NDArray[np.float32]],
-        config: Dict[str, Any],
-    ) -> Tuple[float, int, Dict[str, Any]]:
+        parameters: Parameters,
+        config: Config,
+    ) -> Tuple[float, int, Metrics]:
         """Evaluate the model on local data.
+
+        Overrides BaseFederatedClient's default no-op evaluation
+        with actual model evaluation on the local partition.
 
         Args:
             parameters: Global model parameters from the server.

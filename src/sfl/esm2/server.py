@@ -5,9 +5,8 @@ Configures a Flower server with FedAvg for aggregating ESM2 model
 parameters across federated clients.
 """
 
-import numpy as np
 from flwr.common import Context, ndarrays_to_parameters
-from flwr.server import ServerApp, ServerAppComponents, ServerConfig
+from flwr.server import ServerAppComponents, ServerConfig as FlowerServerConfig
 from flwr.server.strategy import FedAvg
 
 from sfl.esm2.model import DEFAULT_MODEL_NAME, get_parameters, load_model
@@ -58,7 +57,7 @@ def server_fn(context: Context) -> ServerAppComponents:
         initial_parameters=initial_params,
     )
 
-    config = ServerConfig(num_rounds=num_rounds)
+    config = FlowerServerConfig(num_rounds=num_rounds)
 
     logger.info("ESM2 server initialized")
     return ServerAppComponents(strategy=strategy, config=config)

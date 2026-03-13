@@ -80,10 +80,13 @@ Examples:
 def _set_esm2_config(args: argparse.Namespace) -> None:
     """Store CLI args in the shared ESM2 config module."""
     from sfl.esm2.config import ESM2RunConfig, set_run_config
+    from sfl.types import FederationConfig
 
     set_run_config(ESM2RunConfig(
-        num_clients=args.num_clients,
-        num_rounds=args.num_rounds,
+        federation=FederationConfig(
+            num_clients=args.num_clients,
+            num_rounds=args.num_rounds,
+        ),
         model_name=args.model,
         learning_rate=args.learning_rate,
         local_epochs=args.local_epochs,

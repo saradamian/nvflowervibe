@@ -7,12 +7,12 @@ with different training logic, data handling, or update strategies.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Tuple, Any
+from typing import Any, Dict, Optional
 
 import numpy as np
-from numpy.typing import NDArray
 from flwr.client import NumPyClient
 
+from sfl.types import Parameters, Metrics, Config, ClientUpdate
 from sfl.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -40,24 +40,27 @@ class BaseFederatedClient(NumPyClient, ABC):
         self,
         client_id: int = 0,
         config: Dict[str, Any] = None,
+        device: Optional[str] = None,
     ) -> None:
         """Initialize the federated client.
         
         Args:
             client_id: Unique identifier for this client.
             config: Optional configuration dictionary.
+            device: Compute device (e.g. 'cpu', 'cuda'). None = auto-detect.
         """
         super().__init__()
         self.client_id = client_id
         self.config = config or {}
-        logger.debug(f"Initialized client {client_id}")
+        self.device = device or "cpu"
+        logger.debug(f"Initialized client {client_id} on device={self.device}")
     
     @abstractmethod
     def compute_update(
         self,
-        parameters: List[NDArray[np.float32]],
-        config: Dict[str, Any],
-    ) -> Tuple[List[NDArray[np.float32]], int, Dict[str, Any]]:
+        parameters: Parameters,
+        config: Config,
+    ) -> ClientUpdate:
         """Compute the client's update based on received parameters.
         
         This is the main method that subclasses must implement.
@@ -76,7 +79,7 @@ class BaseFederatedClient(NumPyClient, ABC):
         """
         raise NotImplementedError
     
-    def get_initial_parameters(self) -> List[NDArray[np.float32]]:
+    def get_initial_parameters(self) -> Parameters:
         """Get initial parameters for the model.
         
         Override this method to provide custom initial parameters.
@@ -86,7 +89,7 @@ class BaseFederatedClient(NumPyClient, ABC):
         """
         return [np.array([0.0], dtype=np.float32)]
     
-    def get_parameters(self, config: Dict[str, Any]) -> List[NDArray[np.float32]]:
+    def get_parameters(self, config: Config) -> Parameters:
         """Get the current model parameters.
         
         Args:
@@ -99,9 +102,9 @@ class BaseFederatedClient(NumPyClient, ABC):
     
     def fit(
         self,
-        parameters: List[NDArray[np.float32]],
-        config: Dict[str, Any],
-    ) -> Tuple[List[NDArray[np.float32]], int, Dict[str, Any]]:
+        parameters: Parameters,
+        config: Config,
+    ) -> ClientUpdate:
         """Perform a training round with the given parameters.
         
         This method is called by the Flower framework during federated
@@ -124,12 +127,13 @@ class BaseFederatedClient(NumPyClient, ABC):
     
     def evaluate(
         self,
-        parameters: List[NDArray[np.float32]],
-        config: Dict[str, Any],
-    ) -> Tuple[float, int, Dict[str, Any]]:
+        parameters: Parameters,
+        config: Config,
+    ) -> tuple[float, int, Metrics]:
         """Evaluate the model with the given parameters.
         
         Override this method to implement model evaluation logic.
+        Subclasses doing real ML should override this.
         
         Args:
             parameters: Parameters from the server.
@@ -138,5 +142,5 @@ class BaseFederatedClient(NumPyClient, ABC):
         Returns:
             Tuple of loss, example count, and metrics.
         """
-        logger.debug(f"Client {self.client_id}: Evaluate called (no-op)")
+        logger.info(f"Client {self.client_id}: Evaluate not implemented, returning defaults")
         return 0.0, 1, {}
