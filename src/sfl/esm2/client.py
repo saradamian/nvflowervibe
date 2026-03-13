@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from numpy.typing import NDArray
 from torch.utils.data import DataLoader
-from flwr.client import NumPyClient
+from flwr.client import Client, NumPyClient
 from flwr.common import Context
 
 from sfl.esm2.model import (
@@ -67,7 +67,7 @@ class ESM2Client(NumPyClient):
         self.batch_size = batch_size
 
         # Load model and tokenizer
-        self.model = load_model(model_name).to(self.device)
+        self.model: EsmForMaskedLM = load_model(model_name).to(self.device)  # type: ignore[assignment]
         self.tokenizer = load_tokenizer(model_name)
 
         # Load and partition dataset
@@ -207,7 +207,7 @@ class ESM2Client(NumPyClient):
         return total_loss / max(total_batches, 1)
 
 
-def client_fn(context: Context) -> ESM2Client:
+def client_fn(context: Context) -> Client:
     """Factory function for creating ESM2 clients.
 
     Called by Flower's ClientApp to instantiate a client per partition.
@@ -229,6 +229,7 @@ def client_fn(context: Context) -> ESM2Client:
         num_partitions = int(num_partitions)
 
     node_id = int(context.node_id)
+    partition_id = int(partition_id)
 
     # Read config: prefer shared run config (set by runner),
     # fall back to context.run_config (set by pyproject.toml / NVFlare)

@@ -9,7 +9,7 @@ from typing import List, Optional, Tuple
 
 import torch
 from torch.utils.data import Dataset, Subset
-from transformers import AutoTokenizer
+from transformers import PreTrainedTokenizerBase
 
 from sfl.utils.logging import get_logger
 
@@ -69,7 +69,7 @@ class ProteinMLMDataset(Dataset):
     def __init__(
         self,
         sequences: List[str],
-        tokenizer: AutoTokenizer,
+        tokenizer: PreTrainedTokenizerBase,
         max_length: int = 128,
         mask_probability: float = 0.15,
     ) -> None:
@@ -92,8 +92,8 @@ class ProteinMLMDataset(Dataset):
             return_tensors="pt",
         )
 
-        input_ids = encoding["input_ids"].squeeze(0)
-        attention_mask = encoding["attention_mask"].squeeze(0)
+        input_ids = encoding["input_ids"].squeeze(0)  # type: ignore[union-attr]
+        attention_mask = encoding["attention_mask"].squeeze(0)  # type: ignore[union-attr]
 
         # Create labels (copy of input_ids)
         labels = input_ids.clone()
@@ -134,7 +134,7 @@ class ProteinMLMDataset(Dataset):
 
 
 def load_demo_dataset(
-    tokenizer: AutoTokenizer,
+    tokenizer: PreTrainedTokenizerBase,
     max_length: int = 128,
     mask_probability: float = 0.15,
 ) -> ProteinMLMDataset:
@@ -159,7 +159,7 @@ def load_demo_dataset(
 
 def load_dataset_from_hub(
     dataset_name: str,
-    tokenizer: AutoTokenizer,
+    tokenizer: PreTrainedTokenizerBase,
     sequence_column: str = "sequence",
     split: str = "train",
     max_samples: Optional[int] = None,

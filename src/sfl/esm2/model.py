@@ -11,7 +11,7 @@ from typing import List
 import numpy as np
 import torch
 from numpy.typing import NDArray
-from transformers import AutoModelForMaskedLM, AutoTokenizer, EsmForMaskedLM
+from transformers import AutoModelForMaskedLM, AutoTokenizer, EsmForMaskedLM, PreTrainedTokenizerBase
 
 from sfl.utils.logging import get_logger
 
@@ -38,7 +38,7 @@ def load_model(model_name: str = DEFAULT_MODEL_NAME) -> EsmForMaskedLM:
     return model
 
 
-def load_tokenizer(model_name: str = DEFAULT_MODEL_NAME) -> AutoTokenizer:
+def load_tokenizer(model_name: str = DEFAULT_MODEL_NAME) -> PreTrainedTokenizerBase:
     """Load the tokenizer for an ESM2 model.
 
     Args:
