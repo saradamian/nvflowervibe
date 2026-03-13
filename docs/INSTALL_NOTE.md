@@ -25,7 +25,7 @@ Or use the setup script:
 The NVFlare + Flower integration has strict version dependencies:
 
 | Package | Required Version | Why |
-|---------|-----------------|-----|
+| ------- | ---------------- | --- |
 | `nvflare` | 2.7.1 | Flower integration via `FlowerRecipe` |
 | `flwr[simulation]` | 1.17.0 | Compatible CLI and `ServerApp`/`ClientApp` API |
 | `click` | >= 8.1.0, < 8.2.0 | Click 8.2+ breaks Typer (used internally by Flower) |
@@ -48,6 +48,7 @@ The NVFlare + Flower integration has strict version dependencies:
 **Cause:** Flower version is too old.
 
 **Fix:**
+
 ```bash
 pip install flwr[simulation]==1.17.0
 ```
@@ -57,11 +58,13 @@ pip install flwr[simulation]==1.17.0
 **Cause:** Click 8.2+ breaks Typer's internal usage of Click APIs.
 
 **Symptoms:**
-```
+
+```text
 TypeError: __init__() got an unexpected keyword argument 'is_eager'
 ```
 
 **Fix:**
+
 ```bash
 pip install "click>=8.1.0,<8.2.0"
 ```
@@ -71,6 +74,7 @@ pip install "click>=8.1.0,<8.2.0"
 **Cause:** Flower version too old or too new.
 
 **Fix:**
+
 ```bash
 pip install flwr[simulation]==1.17.0
 ```
@@ -80,6 +84,7 @@ pip install flwr[simulation]==1.17.0
 **Cause:** NVFlare installed without Flower optional dependency, or wrong NVFlare version.
 
 **Fix:**
+
 ```bash
 pip install nvflare==2.7.1
 ```
@@ -89,6 +94,7 @@ pip install nvflare==2.7.1
 **Cause:** Ports 8002/8003 already in use, or POC workspace not prepared.
 
 **Fix:**
+
 ```bash
 # Check for port conflicts
 lsof -i :8002
@@ -105,6 +111,7 @@ python jobs/poc_runner.py start
 **Cause:** Flower installed without simulation extras.
 
 **Fix:**
+
 ```bash
 pip install "flwr[simulation]==1.17.0"
 ```
@@ -114,6 +121,7 @@ pip install "flwr[simulation]==1.17.0"
 **Cause:** Insufficient system resources or conflicting Ray instances.
 
 **Fix:**
+
 ```bash
 # Stop existing Ray instances
 ray stop
@@ -127,6 +135,7 @@ pip install "ray>=2.31.0"
 **Cause:** `rich` package not installed. The logging system falls back to simple format automatically, but output won't be colorized.
 
 **Fix:**
+
 ```bash
 pip install "rich>=13.0.0"
 ```
@@ -162,6 +171,7 @@ sudo yum install python3-devel gcc
 ### Windows
 
 NVFlare POC mode is best supported on Linux/macOS. On Windows:
+
 - Use WSL2 for POC and production modes
 - SimEnv mode works natively on Windows
 
@@ -187,7 +197,7 @@ python -c "from flwr.simulation import run_simulation; print('Flower OK')"
 
 Expected output from a successful simulation run:
 
-```
+```text
 [server] round=1 client_vals=[7.0, 8.0] federated_sum=15.0
 ```
 

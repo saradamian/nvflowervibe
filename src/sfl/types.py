@@ -28,11 +28,15 @@ class FederationConfig:
         num_rounds: Number of federated learning rounds.
         min_available_clients: Minimum clients required to start.
         min_fit_clients: Minimum clients required for fit aggregation.
+        fraction_fit: Fraction of clients sampled for training each round.
+        fraction_evaluate: Fraction of clients sampled for evaluation.
     """
     num_clients: int = 2
     num_rounds: int = 1
     min_available_clients: int = 2
     min_fit_clients: int = 2
+    fraction_fit: float = 1.0
+    fraction_evaluate: float = 1.0
     
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -42,6 +46,10 @@ class FederationConfig:
             raise ValueError("num_rounds must be at least 1")
         if self.min_available_clients > self.num_clients:
             raise ValueError("min_available_clients cannot exceed num_clients")
+        if not 0.0 < self.fraction_fit <= 1.0:
+            raise ValueError("fraction_fit must be in (0.0, 1.0]")
+        if not 0.0 < self.fraction_evaluate <= 1.0:
+            raise ValueError("fraction_evaluate must be in (0.0, 1.0]")
 
 
 @dataclass

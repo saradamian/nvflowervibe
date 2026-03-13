@@ -32,6 +32,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+esm2 = [
+    "torch>=2.0.0",
+    "transformers>=4.36.0",
+    "datasets>=2.14.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
@@ -69,6 +74,11 @@ default = "local-simulation"
 
 [tool.flwr.federations.local-simulation]
 options.num-supernodes = 2
+
+# ESM2 Federated Learning app
+[tool.flwr.app.components.esm2]
+serverapp = "sfl.esm2:server_app"
+clientapp = "sfl.esm2:client_app"
 address = "127.0.0.1:9093"
 insecure = true
 

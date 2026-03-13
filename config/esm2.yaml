@@ -1,0 +1,31 @@
+# ESM2 Federated Learning Configuration
+
+federation:
+  num_clients: 2
+  num_rounds: 3
+  min_available_clients: 2
+  min_fit_clients: 2
+
+esm2:
+  # HuggingFace model identifier
+  # Options (smallest to largest):
+  #   facebook/esm2_t6_8M_UR50D    (8M params   — fast demos)
+  #   facebook/esm2_t12_35M_UR50D  (35M params  — light training)
+  #   facebook/esm2_t30_150M_UR50D (150M params — moderate)
+  #   facebook/esm2_t33_650M_UR50D (650M params — needs GPU)
+  model_name: "facebook/esm2_t6_8M_UR50D"
+
+  # Training hyperparameters
+  learning_rate: 5.0e-5
+  local_epochs: 1
+  batch_size: 4
+  max_length: 128
+
+  # Dataset (leave empty to use built-in demo sequences)
+  # dataset_name: "some/hf-dataset"
+  # sequence_column: "sequence"
+  # max_samples: 1000
+
+logging:
+  level: INFO
+  format: rich
