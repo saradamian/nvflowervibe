@@ -23,9 +23,26 @@ from pathlib import Path
 
 
 def run_command(cmd: list[str], check: bool = True, capture: bool = False) -> subprocess.CompletedProcess:
-    """Run a command and optionally capture output."""
+    """Run a command and optionally capture output.
+    
+    Args:
+        cmd: Command and arguments to run.
+        check: If True, raise CalledProcessError on non-zero exit.
+        capture: If True, capture stdout/stderr.
+    
+    Returns:
+        CompletedProcess instance.
+    
+    Raises:
+        subprocess.CalledProcessError: If check=True and command fails.
+    """
     print(f">>> {' '.join(cmd)}")
-    return subprocess.run(cmd, check=check, capture_output=capture, text=True)
+    result = subprocess.run(cmd, check=check, capture_output=capture, text=True)
+    if not check and result.returncode != 0:
+        print(f"    ⚠️  Command exited with code {result.returncode}")
+        if capture and result.stderr:
+            print(f"    stderr: {result.stderr.strip()}")
+    return result
 
 
 def get_poc_workspace() -> Path:
@@ -53,7 +70,11 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     
     # Prepare POC with specified number of clients
     print(f"\nPreparing POC with {args.num_clients} clients...")
-    run_command(["nvflare", "poc", "prepare", "-n", str(args.num_clients)])
+    result = run_command(["nvflare", "poc", "prepare", "-n", str(args.num_clients)], check=False)
+    if result.returncode != 0:
+        print("❌ Failed to prepare POC environment.")
+        print("   Is nvflare installed? Try: pip install nvflare==2.7.1")
+        return 1
     
     # Generate NVFlare job from Flower app
     project_root = get_project_root()
@@ -284,7 +305,23 @@ Examples:
         "status": cmd_status,
     }
     
-    return commands[args.command](args)
+    handler = commands.get(args.command)
+    if handler is None:
+        print(f"❌ Unknown command: {args.command}")
+        parser.print_help()
+        return 1
+    
+    try:
+        return handler(args)
+    except subprocess.CalledProcessError as e:
+        print(f"\n❌ Command failed: {' '.join(e.cmd)}")
+        print(f"   Exit code: {e.returncode}")
+        if e.stderr:
+            print(f"   stderr: {e.stderr.strip()}")
+        return 1
+    except KeyboardInterrupt:
+        print("\n\nInterrupted by user.")
+        return 130
 
 
 if __name__ == "__main__":

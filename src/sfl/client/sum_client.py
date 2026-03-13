@@ -117,8 +117,9 @@ def client_fn(context: Context) -> SumClient:
     try:
         config = get_config()
         base_secret = config.client.base_secret
-    except Exception:
-        # Fall back to default if config not loaded
+    except (RuntimeError, FileNotFoundError, KeyError, AttributeError) as e:
+        # Fall back to default if config not loaded or malformed
+        logger.warning(f"Config unavailable ({type(e).__name__}: {e}), using default base_secret=7.0")
         base_secret = 7.0
     
     # Get partition ID (simpler than node_id for demos)

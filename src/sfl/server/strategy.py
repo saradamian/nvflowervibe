@@ -103,7 +103,11 @@ class SumFedAvg(FedAvg):
         params, metrics = aggregated
         
         # Extract values from each client
-        client_values = self._extract_client_values(results)
+        try:
+            client_values = self._extract_client_values(results)
+        except ValueError as e:
+            logger.error(f"Round {server_round}: {e}")
+            return params, metrics or {}
         
         # Compute the sum
         federated_sum = sum(client_values)
@@ -135,8 +139,12 @@ class SumFedAvg(FedAvg):
         
         Returns:
             List of scalar values from each client.
+        
+        Raises:
+            ValueError: If no client values could be extracted.
         """
         values = []
+        failed_clients = []
         
         for client_proxy, fit_res in results:
             try:
@@ -148,13 +156,27 @@ class SumFedAvg(FedAvg):
                     value = float(arrays[0].item())
                     values.append(value)
                 else:
+                    failed_clients.append(client_proxy.cid)
                     logger.warning(
                         f"Client {client_proxy.cid}: Empty parameters received"
                     )
-            except Exception as e:
+            except (ValueError, TypeError, IndexError) as e:
+                failed_clients.append(client_proxy.cid)
                 logger.error(
-                    f"Client {client_proxy.cid}: Failed to extract value: {e}"
+                    f"Client {client_proxy.cid}: Failed to extract value "
+                    f"({type(e).__name__}): {e}"
                 )
+        
+        if failed_clients:
+            logger.warning(
+                f"{len(failed_clients)} client(s) excluded from aggregation: "
+                f"{failed_clients}"
+            )
+        
+        if not values and results:
+            raise ValueError(
+                f"Failed to extract values from any of {len(results)} client(s)"
+            )
         
         return values
     
