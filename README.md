@@ -1,147 +1,133 @@
-# SFL - Simple Federated Learning Demo
+# SFL - Simple Federated Learning Framework
 
-A clean, maintainable, and extensible federated learning demonstration using **NVIDIA FLARE (NVFlare)** and **Flower** frameworks.
+An extensible federated learning framework using **NVIDIA FLARE (NVFlare)** and **Flower**, with a production-ready ESM2 protein language model application.
 
-## 🎯 Overview
+## Overview
 
-This project demonstrates a "Federated Sum" example where multiple clients contribute secret values, and the server aggregates them securely. It showcases:
+This project provides:
 
-- **NVFlare + Flower integration** for production-ready federated learning
-- **Clean architecture** with separation of concerns
-- **Type hints** throughout for maintainability
+- **Extensible base framework** — abstract `BaseFederatedClient` with type-safe contracts, configurable `FederationConfig`, shared type aliases
+- **ESM2 protein model application** — federated fine-tuning of ESM2 (8M–35M params) via masked language modeling, built on the base framework
+- **NVFlare + Flower integration** — run with pure Flower simulation or NVFlare orchestration
 - **Configurable** via YAML, environment variables, or CLI
-- **Extensible** design for adding custom strategies and clients
+- **134 tests** with GitHub Actions CI on every PR
 
-## 📁 Project Structure
+### Applications
+
+| Application | Description | Runner |
+|-------------|-------------|--------|
+| **Federated Sum** (demo) | Clients contribute secret values, server aggregates | `python jobs/runner.py` |
+| **ESM2 FL** (real ML) | Federated fine-tuning of ESM2 protein language model | `python jobs/esm2_runner.py` |
+
+## Project Structure
 
 ```
 sfl/
-├── README.md                 # This file
-├── pyproject.toml           # Project metadata & Flower configuration
-├── requirements.txt         # Pinned dependencies
+├── pyproject.toml              # Project metadata & Flower app config
+├── requirements.txt            # Pinned dependencies
 ├── config/
-│   └── default.yaml        # Default configuration
+│   ├── default.yaml            # Default federation config
+│   └── esm2.yaml               # ESM2-specific config
 ├── docs/
-│   ├── DEPLOYMENT.md       # Detailed deployment guide
-│   └── INSTALL_NOTE.md     # Installation & troubleshooting
-├── src/
-│   └── sfl/
-│       ├── __init__.py
-│       ├── types.py        # Shared type definitions
-│       ├── client/
-│       │   ├── __init__.py
-│       │   ├── base.py     # Abstract base client
-│       │   └── sum_client.py
-│       ├── server/
-│       │   ├── __init__.py
-│       │   ├── strategy.py # Custom FedAvg strategy
-│       │   └── app.py      # Server application
-│       └── utils/
-│           ├── __init__.py
-│           ├── config.py   # Configuration management
-│           └── logging.py  # Logging utilities
+│   ├── DEPLOYMENT.md           # Deployment guide (SimEnv → Production)
+│   └── INSTALL_NOTE.md         # Installation & troubleshooting
+├── src/sfl/
+│   ├── __init__.py             # Exports FederationConfig, ClientConfig, etc.
+│   ├── types.py                # Shared types: Parameters, Metrics, Config, ClientUpdate
+│   ├── client/
+│   │   ├── base.py             # BaseFederatedClient (abstract, device-aware)
+│   │   └── sum_client.py       # SumClient — demo implementation
+│   ├── server/
+│   │   ├── strategy.py         # SumFedAvg — custom aggregation strategy
+│   │   └── app.py              # Server application (sum demo)
+│   ├── esm2/
+│   │   ├── __init__.py         # Exports client_app, server_app (Flower apps)
+│   │   ├── config.py           # ESM2RunConfig (composes FederationConfig)
+│   │   ├── model.py            # ESM2 load/save, parameter serialization
+│   │   ├── dataset.py          # Protein sequences, MLM masking, IID partitioning
+│   │   ├── client.py           # ESM2Client (extends BaseFederatedClient)
+│   │   └── server.py           # FedAvg seeded with pretrained ESM2 weights
+│   └── utils/
+│       ├── config.py           # YAML + env + CLI config management
+│       └── logging.py          # Rich/simple/JSON logging
 ├── jobs/
-│   ├── runner.py           # NVFlare SimEnv runner
-│   ├── flower_runner.py    # Pure Flower runner (fallback)
-│   └── poc_runner.py       # NVFlare POC mode runner
+│   ├── runner.py               # Sum demo — NVFlare SimEnv runner
+│   ├── esm2_runner.py          # ESM2 — Flower or NVFlare backend
+│   ├── flower_runner.py        # Sum demo — pure Flower fallback
+│   └── poc_runner.py           # NVFlare POC mode runner
+├── tests/
+│   ├── test_client.py          # SumClient + FederationConfig tests
+│   ├── test_config.py          # Config utility tests
+│   ├── test_structure.py       # Package layout + API contract tests
+│   ├── test_integration.py     # End-to-end aggregation pipeline tests
+│   ├── test_esm2_config.py     # ESM2RunConfig + FederationConfig composition
+│   ├── test_esm2_model.py      # Model loading, parameter roundtrip
+│   ├── test_esm2_dataset.py    # MLM masking, partitioning
+│   ├── test_esm2_client.py     # ESM2Client inheritance, training, evaluation
+│   └── test_esm2_server.py     # Server FedAvg setup, config overrides
 ├── scripts/
-│   ├── setup.sh              # Environment setup
-│   ├── run_simulation.sh     # Quick run script
-│   └── generate_nvflare_job.py  # POC/Production job generator
-└── tests/
-    ├── __init__.py
-    ├── test_client.py
-    └── test_config.py
+│   ├── setup.sh                # Environment setup
+│   ├── run_simulation.sh       # Quick run script
+│   └── generate_nvflare_job.py # POC/Production job generator
+└── .github/workflows/
+    └── ci.yml                  # GitHub Actions: pytest on PR to main
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Environment Setup
 
 ```bash
-# Create virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
-
-# Install dependencies
 pip install -U pip wheel setuptools
 pip install -r requirements.txt
-
-# Or use the setup script
-./scripts/setup.sh
 ```
 
-### 2. Run the Simulation
-
-Three deployment modes available, from simplest to production-ready:
-
-#### Mode 1: SimEnv (Recommended for Development)
-
-Single-process simulation - fastest for development and testing:
+### 2. Run the Sum Demo
 
 ```bash
-# Quick run with defaults (2 clients, 1 round)
+# Default: 2 clients, 1 round
 python jobs/runner.py
 
-# Custom configuration
+# Custom
 python jobs/runner.py --num-clients 4 --num-rounds 3
-
-# Using config file
-python jobs/runner.py --config config/default.yaml
 ```
 
-#### Mode 2: Pure Flower (Fallback Option)
-
-Pure Flower simulation without NVFlare (useful if NVFlare has compatibility issues):
-
-```bash
-# Quick run with defaults
-python jobs/flower_runner.py
-
-# Custom configuration
-python jobs/flower_runner.py --num-clients 4 --num-rounds 3
-
-# Using config file
-python jobs/flower_runner.py --config config/default.yaml
-```
-
-*See [docs/INSTALL_NOTE.md](docs/INSTALL_NOTE.md) for details about NVFlare compatibility issues.*
-
-#### Mode 3: POC Mode (Multi-Process Testing)
-
-Multi-process local deployment simulating real network behavior:
-
-```bash
-# Step 1: Prepare POC environment (creates server + client processes)
-python jobs/poc_runner.py prepare --num-clients 4 --clean
-
-# Step 2: Start all services
-python jobs/poc_runner.py start
-
-# Step 3: Submit job via admin console
-python jobs/poc_runner.py submit
-
-# Step 4: Monitor and stop
-python jobs/poc_runner.py status
-python jobs/poc_runner.py stop
-
-# Clean up POC workspace
-python jobs/poc_runner.py clean
-```
-
-See the **Deployment Modes** section below for production deployments.
-
-### 3. Expected Output
-
+Expected output:
 ```
 [server] round=1 client_vals=[7.0, 8.0] federated_sum=15.0
 ```
 
+### 3. Run ESM2 Federated Training
+
+```bash
+# Quick demo — 2 clients, 3 rounds, 8M-param ESM2 model
+python jobs/esm2_runner.py
+
+# Custom settings
+python jobs/esm2_runner.py --num-clients 4 --num-rounds 5 --learning-rate 1e-4
+
+# Larger model
+python jobs/esm2_runner.py --model facebook/esm2_t12_35M_UR50D
+
+# NVFlare backend
+python jobs/esm2_runner.py --backend nvflare --num-clients 2 --num-rounds 2
+```
+
+GPU auto-detection: if CUDA GPUs are available, they are automatically allocated across simulation clients.
+
+### 4. Run Tests
+
+```bash
+python -m pytest tests/ -v
+```
+
 ---
 
-## 📦 Deployment Modes
+## Deployment Modes
 
-This project supports multiple deployment modes, from development to production:
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full details.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -370,15 +356,7 @@ For containerized deployments, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#4-doc
 
 ---
 
-## ⚙️ Configuration
-
-### Environment Variables
-
-Copy `.env.example` to `.env` and customize:
-
-```bash
-cp .env.example .env
-```
+## Configuration
 
 ### YAML Configuration
 
@@ -426,46 +404,55 @@ clean             Remove POC workspace
 
 ---
 
-## 🔧 Extending the Project
+## Extending the Framework
 
-### Adding a New Client Type
+### Adding a New FL Application
 
-1. Create a new client in `src/sfl/client/`:
+The ESM2 module demonstrates the pattern. To add your own:
+
+1. **Create a module** in `src/sfl/your_app/`
+
+2. **Extend `BaseFederatedClient`** — implement `compute_update()` and optionally override `evaluate()`:
 
 ```python
 from sfl.client.base import BaseFederatedClient
-from flwr.common import NDArrays, Scalar
+from sfl.types import Parameters, Config, ClientUpdate
 
-class MyCustomClient(BaseFederatedClient):
-    def get_parameters(self, config: dict[str, Scalar]) -> NDArrays:
-        # Return client parameters
-        pass
-        
-    def fit(self, parameters: NDArrays, config: dict[str, Scalar]) -> tuple[NDArrays, int, dict[str, Scalar]]:
-        # Your custom training logic here
-        pass
+class MyClient(BaseFederatedClient):
+    def __init__(self, client_id=0, device=None, **kwargs):
+        resolved_device = device or "cpu"
+        super().__init__(client_id=client_id, device=resolved_device)
+        # Load your model, data, etc.
+
+    def compute_update(self, parameters: Parameters, config: Config) -> ClientUpdate:
+        # Load params → train → return updated params
+        return updated_params, num_examples, metrics
+
+    def evaluate(self, parameters: Parameters, config: Config):
+        # Optional: override for real evaluation
+        return loss, num_examples, {"eval_loss": loss}
 ```
 
-2. Register it in `src/sfl/client/__init__.py`
-
-### Adding a New Aggregation Strategy
-
-1. Extend `SumFedAvg` in `src/sfl/server/strategy.py`:
+3. **Compose config** with `FederationConfig`:
 
 ```python
-from flwr.server.strategy import FedAvg
+from dataclasses import dataclass, field
+from sfl.types import FederationConfig
 
-class MyCustomStrategy(FedAvg):
-    def aggregate_fit(self, server_round, results, failures):
-        # Your custom aggregation logic
-        pass
+@dataclass
+class MyRunConfig:
+    federation: FederationConfig = field(default_factory=FederationConfig)
+    model_name: str = "my-model"
+    # your hyperparams...
 ```
 
-2. Update server app in `src/sfl/server/app.py` to use your strategy
+4. **Create a runner** in `jobs/` and register Flower apps in `__init__.py`
+
+5. **Add tests** in `tests/test_your_app_*.py`
 
 ---
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 See [docs/INSTALL_NOTE.md](docs/INSTALL_NOTE.md) for detailed troubleshooting.
 
@@ -503,7 +490,7 @@ click>=8.1.0,<8.2.0  # Important: Click 8.2+ breaks Typer
 
 ---
 
-## 📚 Resources
+## Resources
 
 - [NVFlare Documentation](https://nvflare.readthedocs.io/)
 - [Flower Documentation](https://flower.ai/docs/)
@@ -513,7 +500,7 @@ click>=8.1.0,<8.2.0  # Important: Click 8.2+ breaks Typer
 
 ---
 
-## 🔐 Security Features (Production Mode)
+## Security Features (Production Mode)
 
 ### TLS/SSL Encryption
 - All communication encrypted with certificates
@@ -533,15 +520,15 @@ click>=8.1.0,<8.2.0  # Important: Click 8.2+ breaks Typer
 
 ---
 
-## 📈 Recommended Progression
+## Recommended Progression
 
-1. **Start**: Use `SimEnv` mode (`python jobs/runner.py`) for development
+1. **Start**: Use `SimEnv` mode (`python jobs/runner.py` or `python jobs/esm2_runner.py`) for development
 2. **Test**: Use `POC mode` (`python jobs/poc_runner.py`) for integration testing
 3. **Stage**: Use `Provision` mode for staging environment
 4. **Deploy**: Full production with TLS + monitoring
 
 ---
 
-## 📝 License
+## License
 
 MIT License - See LICENSE file for details.

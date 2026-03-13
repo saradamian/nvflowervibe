@@ -9,6 +9,11 @@ This guide covers all deployment modes for the SFL (Simple Federated Learning) d
 - Flower 1.17.0
 - Click >= 8.1.0, < 8.2.0 (see [INSTALL_NOTE.md](INSTALL_NOTE.md) for details)
 
+For ESM2 federated training, additionally:
+- PyTorch >= 2.0.0 (CUDA recommended for GPU acceleration)
+- Transformers >= 4.36.0
+- Datasets >= 2.14.0
+
 ```bash
 pip install -r requirements.txt
 ```
@@ -303,3 +308,39 @@ services:
 - **Provisioned:** TLS certificates auto-generated. Distribute startup kits securely.
 - **Production:** Use `CertBuilder` for proper PKI. Rotate certificates regularly.
 - Client secrets are transmitted as Flower parameters — for real workloads, consider differential privacy or secure aggregation extensions.
+
+---
+
+## ESM2 Federated Training
+
+The ESM2 module supports both Flower and NVFlare backends.
+
+### Flower Backend (Recommended for Development)
+
+```bash
+# Quick demo — 2 clients, 3 rounds
+python jobs/esm2_runner.py
+
+# Custom settings
+python jobs/esm2_runner.py --num-clients 4 --num-rounds 5 --learning-rate 1e-4
+
+# Larger model
+python jobs/esm2_runner.py --model facebook/esm2_t12_35M_UR50D
+```
+
+GPU auto-detection: CUDA GPUs are automatically detected and allocated evenly across simulation clients.
+
+### NVFlare Backend
+
+```bash
+python jobs/esm2_runner.py --backend nvflare --num-clients 2 --num-rounds 2
+```
+
+This stages the source code into a temp directory, generates an ESM2-specific `pyproject.toml` pointing to `sfl.esm2:server_app` / `sfl.esm2:client_app`, and runs via NVFlare's `FlowerRecipe` + `SimEnv`.
+
+### Performance Notes
+
+| Backend | 2 clients, 2 rounds | Notes |
+|---------|---------------------|-------|
+| Flower | ~10s | Lightweight Ray actors, minimal overhead |
+| NVFlare | ~38s | gRPC infrastructure, job staging, process management |

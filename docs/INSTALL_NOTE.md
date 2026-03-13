@@ -32,6 +32,9 @@ The NVFlare + Flower integration has strict version dependencies:
 | `typer` | >= 0.12.0 | CLI framework used by Flower |
 | `numpy` | >= 1.21.0, < 2.0.0 | NumPy 2.0 has breaking API changes |
 | `ray` | >= 2.31.0 | Simulation backend for Flower |
+| `torch` | >= 2.0.0 | ESM2 model training (CUDA recommended) |
+| `transformers` | >= 4.36.0 | ESM2 model loading via HuggingFace |
+| `datasets` | >= 2.14.0 | HuggingFace dataset loading (optional, for Hub datasets) |
 
 ### Why These Exact Versions?
 
@@ -182,20 +185,26 @@ NVFlare POC mode is best supported on Linux/macOS. On Windows:
 Run the test suite to verify everything is correctly installed:
 
 ```bash
-# Run unit tests
+# Run all tests (134 tests)
 python -m pytest tests/ -v
 
-# Quick smoke test — run SimEnv simulation
+# Quick smoke test — Sum demo via SimEnv
 python jobs/runner.py --num-clients 2 --num-rounds 1
+
+# ESM2 smoke test — Flower backend
+python jobs/esm2_runner.py --num-clients 2 --num-rounds 1
 
 # Verify NVFlare is available
 python -c "from nvflare.app_opt.flower.recipe import FlowerRecipe; print('NVFlare OK')"
 
 # Verify Flower is available
 python -c "from flwr.simulation import run_simulation; print('Flower OK')"
+
+# Verify ESM2 dependencies
+python -c "from sfl.esm2 import ESM2Client; print('ESM2 OK')"
 ```
 
-Expected output from a successful simulation run:
+Expected output from sum demo:
 
 ```text
 [server] round=1 client_vals=[7.0, 8.0] federated_sum=15.0
