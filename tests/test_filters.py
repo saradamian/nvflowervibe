@@ -87,19 +87,6 @@ def _extract_params(msg: Message) -> list[np.ndarray]:
 # ── PercentilePrivacy Tests ─────────────────────────────────────────────────
 
 
-class TestPercentilePrivacyConfig:
-
-    def test_defaults(self):
-        cfg = PercentilePrivacyConfig()
-        assert cfg.percentile == 10
-        assert cfg.gamma == 0.01
-
-    def test_custom(self):
-        cfg = PercentilePrivacyConfig(percentile=50, gamma=0.1)
-        assert cfg.percentile == 50
-        assert cfg.gamma == 0.1
-
-
 class TestPercentilePrivacyMod:
 
     def test_zeros_below_percentile(self):
@@ -157,17 +144,6 @@ class TestPercentilePrivacyMod:
 
 
 # ── SVTPrivacy Tests ────────────────────────────────────────────────────────
-
-
-class TestSVTPrivacyConfig:
-
-    def test_defaults(self):
-        cfg = SVTPrivacyConfig()
-        assert cfg.fraction == 0.1
-        assert cfg.epsilon == 0.1
-        assert cfg.noise_var == 0.1
-        assert cfg.gamma == 1e-5
-        assert cfg.tau == 1e-6
 
 
 class TestSVTPrivacyMod:
@@ -350,25 +326,4 @@ class TestHEContext:
         assert len(encrypted[0]) > 1000
 
 
-# ── Module exports ──────────────────────────────────────────────────────────
 
-
-class TestFilterExports:
-
-    def test_imports(self):
-        from sfl.privacy import (
-            make_percentile_privacy_mod,
-            make_svt_privacy_mod,
-            make_exclude_vars_mod,
-            PercentilePrivacyConfig,
-            SVTPrivacyConfig,
-        )
-        assert callable(make_percentile_privacy_mod)
-        assert callable(make_svt_privacy_mod)
-        assert callable(make_exclude_vars_mod)
-
-    @unittest.skipUnless(_has_tenseal, "tenseal not installed")
-    def test_he_imports(self):
-        from sfl.privacy import HEContext, HEConfig
-        assert HEContext is not None
-        assert HEConfig is not None

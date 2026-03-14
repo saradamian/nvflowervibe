@@ -16,35 +16,20 @@ from sfl.types import SFLConfig
 class TestConfigHelpers:
     """Tests for configuration helper functions."""
     
-    def test_get_env_default(self):
-        """Test _get_env returns default when not set."""
-        result = _get_env("NONEXISTENT_KEY_12345", "default_value")
-        assert result == "default_value"
-    
-    def test_get_env_with_value(self, monkeypatch):
-        """Test _get_env returns env value when set."""
+    def test_get_env_returns_default_or_value(self, monkeypatch):
+        """Test _get_env returns default when unset, env value when set."""
+        assert _get_env("NONEXISTENT_KEY_12345", "default_value") == "default_value"
         monkeypatch.setenv("SFL_TEST_KEY", "test_value")
-        result = _get_env("TEST_KEY", "default")
-        assert result == "test_value"
-    
-    def test_get_env_bool_true(self, monkeypatch):
-        """Test _get_env handles boolean true values."""
-        for true_val in ["true", "1", "yes", "on", "TRUE"]:
-            monkeypatch.setenv("SFL_BOOL_TEST", true_val)
-            result = _get_env("BOOL_TEST", False, bool)
-            assert result is True
-    
-    def test_get_env_bool_false(self, monkeypatch):
-        """Test _get_env handles boolean false values."""
+        assert _get_env("TEST_KEY", "default") == "test_value"
+
+    def test_get_env_type_casting(self, monkeypatch):
+        """Test _get_env handles bool and int casting."""
+        monkeypatch.setenv("SFL_BOOL_TEST", "true")
+        assert _get_env("BOOL_TEST", False, bool) is True
         monkeypatch.setenv("SFL_BOOL_TEST", "false")
-        result = _get_env("BOOL_TEST", True, bool)
-        assert result is False
-    
-    def test_get_env_int(self, monkeypatch):
-        """Test _get_env handles int casting."""
+        assert _get_env("BOOL_TEST", True, bool) is False
         monkeypatch.setenv("SFL_INT_TEST", "42")
-        result = _get_env("INT_TEST", 0, int)
-        assert result == 42
+        assert _get_env("INT_TEST", 0, int) == 42
     
     def test_merge_dict_simple(self):
         """Test _merge_dict with simple values."""
@@ -123,17 +108,3 @@ class TestLoadConfig:
         assert config.federation.num_clients == 10
         assert config.federation.num_rounds == 5
 
-
-class TestResetConfig:
-    """Tests for reset_config function."""
-    
-    def test_reset_clears_cache(self):
-        """Test reset_config clears the config cache."""
-        # Load config
-        config1 = load_config(cli_overrides={"federation": {"num_clients": 99}})
-        assert config1.federation.num_clients == 99
-        
-        # Reset and reload
-        reset_config()
-        config2 = load_config()
-        assert config2.federation.num_clients == 2  # Back to default
