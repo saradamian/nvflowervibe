@@ -26,7 +26,7 @@ from sfl.privacy.filters import (
     PercentilePrivacyConfig,
     SVTPrivacyConfig,
 )
-from sfl.privacy.secagg import build_secagg_config, SecAggConfig
+from sfl.privacy.secagg import build_secagg_config, make_secagg_main, SecAggConfig
 
 # Optional: privacy accounting (requires dp-accounting)
 try:
