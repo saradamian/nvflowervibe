@@ -89,8 +89,8 @@ Examples:
     # Privacy
     parser.add_argument("--dp", action="store_true",
                         help="Enable differential privacy")
-    parser.add_argument("--dp-noise", type=float, default=0.1,
-                        help="DP noise multiplier (default: 0.1)")
+    parser.add_argument("--dp-noise", type=float, default=1.0,
+                        help="DP noise multiplier (default: 1.0)")
     parser.add_argument("--dp-clip", type=float, default=10.0,
                         help="DP clipping norm (default: 10.0)")
     parser.add_argument("--dp-mode", type=str, default="server",
@@ -106,6 +106,10 @@ Examples:
                         help="Target unclipped fraction for adaptive clipping (default: 0.5)")
     parser.add_argument("--dp-clip-lr", type=float, default=0.2,
                         help="Learning rate for adaptive clip norm update (default: 0.2)")
+    parser.add_argument("--dp-quantile-noise", type=float, default=None,
+                        help="Noise multiplier for private quantile tracking in adaptive "
+                             "clipping (default: 0.1 when adaptive clipping enabled, "
+                             "0 otherwise). Set to 0 for non-private (testing only).")
 
     # Privacy filters
     parser.add_argument("--percentile-privacy", type=int, default=None, metavar="PCT",
@@ -241,6 +245,9 @@ def run_flower(args: argparse.Namespace, logger) -> int:
             os.environ["SFL_DP_ADAPTIVE_CLIP"] = "true"
             os.environ["SFL_DP_TARGET_QUANTILE"] = str(args.dp_target_quantile)
             os.environ["SFL_DP_CLIP_LR"] = str(args.dp_clip_lr)
+            # Default to private quantile tracking (0.1) unless explicitly set
+            quantile_noise = args.dp_quantile_noise if args.dp_quantile_noise is not None else 0.1
+            os.environ["SFL_DP_QUANTILE_NOISE"] = str(quantile_noise)
 
         if args.dp_mode == "client":
             from flwr.client.mod import fixedclipping_mod

@@ -110,7 +110,7 @@ class DPConfig:
         quantile_noise_multiplier: Noise multiplier for private quantile
             tracking. 0 = non-private (testing only).
     """
-    noise_multiplier: float = 0.1
+    noise_multiplier: float = 1.0
     clipping_norm: float = 10.0
     num_sampled_clients: int = 2
     mode: Literal["server", "client"] = "server"
@@ -144,6 +144,13 @@ def wrap_strategy_with_dp(
     Returns:
         DP-wrapped strategy with automatic budget enforcement.
     """
+    if dp_config.noise_multiplier < 0.3:
+        logger.warning(
+            "noise_multiplier=%.2f is very low — this will produce ε >> 10 "
+            "per round, offering negligible privacy. Consider σ >= 0.8 for "
+            "meaningful privacy guarantees.",
+            dp_config.noise_multiplier,
+        )
     if dp_config.mode == "client":
         wrapped = DifferentialPrivacyClientSideFixedClipping(
             strategy=strategy,
@@ -250,6 +257,16 @@ class _AccountingWrapper(Strategy):
 
         if params is not None:
             from sfl.privacy.accountant import BudgetExhaustedError
+
+            # Compose adaptive clipping quantile query cost if present.
+            # The AdaptiveClipWrapper stores the DpEvent from each
+            # round's private quantile estimate.
+            from sfl.privacy.adaptive_clip import AdaptiveClipWrapper
+            if isinstance(self._inner, AdaptiveClipWrapper):
+                _adaptive = self._inner._last_quantile_dp_event
+                if _adaptive is not None:
+                    self.privacy_accountant._accountant.compose(_adaptive)
+
             try:
                 eps = self.privacy_accountant.step(
                     num_participants=len(results),
@@ -279,6 +296,32 @@ class _AccountingWrapper(Strategy):
                 metrics["dp_total_epsilon"] = total_eps
                 metrics["dp_total_delta"] = total_delta
                 metrics["dpsgd_epsilon_max"] = max_client_eps
+
+            # Per-round privacy budget dashboard
+            acc = self.privacy_accountant
+            budget_pct = min(100.0, 100.0 * acc.epsilon / acc._max_epsilon)
+            total_eps_display = metrics.get("dp_total_epsilon", metrics.get("dp_epsilon", 0.0))
+            logger.info(
+                "┌─ Privacy Budget ─────────────────────────────────────┐\n"
+                "│ Round %-4d  ε = %-8.4f  δ = %-10.1e           │\n"
+                "│ Budget:    %.1f%% used  (%.4f / %.1f)              │\n"
+                "│ Remaining: ε = %-8.4f  (%d rounds completed)       │\n"
+                "%s"
+                "└──────────────────────────────────────────────────────┘",
+                server_round,
+                total_eps_display,
+                acc._delta,
+                budget_pct,
+                acc.epsilon,
+                acc._max_epsilon,
+                max(0.0, acc._max_epsilon - acc.epsilon),
+                acc.rounds,
+                (
+                    f"│ Client DP-SGD: ε_max = {max_client_eps:.4f}"
+                    f"                       │\n"
+                    if max_client_eps > 0 else ""
+                ),
+            )
 
         return params, metrics
 

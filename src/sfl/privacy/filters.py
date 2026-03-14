@@ -92,15 +92,14 @@ def make_percentile_privacy_mod(
         noise_scale=noise_scale, epsilon=epsilon, delta=delta,
     )
 
-    # Auto-calibrate noise from (epsilon, delta) if provided
+    # Pre-import calibration function if epsilon is set.
+    # Actual calibration is deferred to per-round application because
+    # the L2 sensitivity depends on the number of surviving elements K:
+    # Δ₂ = gamma * √K, not just gamma.
+    _calibrate_fn = None
     if cfg.epsilon > 0:
         from sfl.privacy.dp import calibrate_gaussian_sigma
-        sigma = calibrate_gaussian_sigma(cfg.epsilon, cfg.delta, cfg.gamma)
-        cfg.noise_scale = sigma / cfg.gamma
-        log(INFO,
-            "PercentilePrivacy: calibrated σ=%.4f for (ε=%.2f, δ=%.1e), "
-            "noise_scale=%.4f",
-            sigma, cfg.epsilon, cfg.delta, cfg.noise_scale)
+        _calibrate_fn = calibrate_gaussian_sigma
     elif cfg.noise_scale > 0:
         log(WARNING,
             "PercentilePrivacy: noise_scale=%.4f is uncalibrated (no formal "
@@ -124,6 +123,21 @@ def make_percentile_privacy_mod(
         all_abs = np.concatenate([np.abs(p.ravel()) for p in params])
         cutoff = np.percentile(all_abs, cfg.percentile)
 
+        # Count surviving elements for correct L2 sensitivity
+        k_surviving = int(np.sum(all_abs >= cutoff))
+
+        # Calibrate noise per-round using correct L2 sensitivity = γ√K
+        effective_noise_scale = cfg.noise_scale
+        if _calibrate_fn is not None and k_surviving > 0:
+            import math
+            sensitivity = cfg.gamma * math.sqrt(k_surviving)
+            sigma = _calibrate_fn(cfg.epsilon, cfg.delta, sensitivity)
+            effective_noise_scale = sigma / cfg.gamma
+            log(INFO,
+                "PercentilePrivacy: calibrated σ=%.4f for (ε=%.2f, δ=%.1e), "
+                "K=%d, Δ₂=%.4f",
+                sigma, cfg.epsilon, cfg.delta, k_surviving, sensitivity)
+
         filtered = []
         for p in params:
             arr = p.copy()
@@ -136,19 +150,19 @@ def make_percentile_privacy_mod(
             # Clip remaining to gamma
             arr = np.clip(arr, -cfg.gamma, cfg.gamma)
             # Add Gaussian noise if configured
-            if cfg.noise_scale > 0:
-                noise = np.random.normal(0, cfg.noise_scale * cfg.gamma, size=arr.shape)
+            if effective_noise_scale > 0:
+                noise = np.random.normal(0, effective_noise_scale * cfg.gamma, size=arr.shape)
                 arr = np.clip(arr + noise, -cfg.gamma, cfg.gamma)
             filtered.append(arr)
 
-        if cfg.noise_scale == 0:
+        if effective_noise_scale == 0:
             log(WARNING,
                 "PercentilePrivacy with noise_scale=0 provides NO formal privacy "
                 "guarantee. It reduces bandwidth but does NOT prevent gradient "
                 "inversion attacks. Use --percentile-noise > 0 or --svt-privacy.")
 
         log(INFO, "percentile_privacy_mod: cutoff=%.6f, percentile=%d, noise=%.4f",
-            cutoff, cfg.percentile, cfg.noise_scale)
+            cutoff, cfg.percentile, effective_noise_scale)
 
         fit_res.parameters = ndarrays_to_parameters(filtered)
         out_msg.content = compat.fitres_to_recorddict(fit_res, keep_input=True)
@@ -264,21 +278,19 @@ def make_svt_privacy_mod(
         # Per-query noise scale (same for selection and output)
         query_scale = cfg.gamma / eps_2
 
-        # Select values above noisy threshold
+        # Single-pass SVT: each candidate is queried exactly once.
+        # Re-querying rejected candidates with fresh noise would violate
+        # the one-shot SVT ε-DP proof (Dwork & Roth 2014, Theorem 3.25).
         clipped_w = np.abs(np.clip(delta_w, -cfg.gamma, cfg.gamma))
-        accepted: list = []
 
-        iteration = 0
-        while len(accepted) < n_upload and candidate_idx.size > 0 and iteration < _SVT_MAX_ITERATIONS:
-            iteration += 1
-            nu_i = np.random.laplace(scale=query_scale, size=candidate_idx.shape)
-            above = (clipped_w[candidate_idx] + nu_i) >= threshold
-            accepted.extend(candidate_idx[above].tolist())
-            candidate_idx = candidate_idx[~above]
+        nu_i = np.random.laplace(scale=query_scale, size=candidate_idx.shape)
+        above = (clipped_w[candidate_idx] + nu_i) >= threshold
+        accepted = candidate_idx[above].tolist()
 
-        if iteration >= _SVT_MAX_ITERATIONS:
-            log(WARNING, "SVT: hit iteration cap (%d), selected only %d/%d",
-                _SVT_MAX_ITERATIONS, len(accepted), n_upload)
+        if len(accepted) < n_upload:
+            log(WARNING, "SVT: accepted only %d/%d params in single pass "
+                "(consider increasing epsilon or pre_screen_ratio)",
+                len(accepted), n_upload)
 
         # Sample exactly n_upload if we got more
         if len(accepted) > n_upload:

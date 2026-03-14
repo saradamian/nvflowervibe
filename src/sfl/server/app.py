@@ -109,7 +109,7 @@ def server_fn(context: Context) -> ServerAppComponents:
         dp_config = DPConfig(
             noise_multiplier=float(
                 run_config.get("dp-noise-multiplier",
-                               os.environ.get("SFL_DP_NOISE", "0.1"))
+                               os.environ.get("SFL_DP_NOISE", "1.0"))
             ),
             clipping_norm=float(
                 run_config.get("dp-clipping-norm",
@@ -131,6 +131,9 @@ def server_fn(context: Context) -> ServerAppComponents:
             ),
             clip_learning_rate=float(
                 os.environ.get("SFL_DP_CLIP_LR", "0.2")
+            ),
+            quantile_noise_multiplier=float(
+                os.environ.get("SFL_DP_QUANTILE_NOISE", "0.0")
             ),
         )
         strategy = wrap_strategy_with_dp(strategy, dp_config)

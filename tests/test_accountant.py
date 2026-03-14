@@ -110,12 +110,14 @@ class TestComposeEpsilon:
     """Tests for sequential composition of client+server DP."""
 
     def test_basic_composition(self):
-        """Total ε = ε_server + ε_client, δ = δ_server + δ_client."""
+        """PLD composition should be tighter than basic sequential (ε₁+ε₂)."""
         total_eps, total_delta = compose_epsilon(
             eps_server=2.0, eps_client=3.0,
             delta_server=1e-5, delta_client=1e-5,
         )
-        assert total_eps == pytest.approx(5.0)
+        # PLD composition gives tighter bound than basic (2+3=5)
+        assert total_eps < 5.0
+        assert total_eps > 0
         assert total_delta == pytest.approx(2e-5)
 
     def test_zero_client_epsilon(self):
@@ -175,3 +177,36 @@ class TestParticipationTracking:
             acc_a.step()
             acc_b.step(num_participants=None)
         assert acc_a.epsilon == pytest.approx(acc_b.epsilon)
+
+
+class TestPLDComposition:
+    """Tests for PLD-based joint composition (B1)."""
+
+    def test_pld_tighter_than_basic(self):
+        """PLD joint composition should beat naive ε₁+ε₂ for non-trivial ε."""
+        total_eps, total_delta = compose_epsilon(
+            eps_server=3.0, eps_client=4.0,
+            delta_server=1e-5, delta_client=1e-5,
+        )
+        assert total_eps < 7.0, "PLD composition should be tighter than basic (3+4=7)"
+        assert total_eps > 0
+
+    def test_pld_composition_symmetry(self):
+        """compose_epsilon(a,b) ~ compose_epsilon(b,a)."""
+        eps_ab, _ = compose_epsilon(
+            eps_server=1.5, eps_client=2.5,
+            delta_server=1e-5, delta_client=1e-5,
+        )
+        eps_ba, _ = compose_epsilon(
+            eps_server=2.5, eps_client=1.5,
+            delta_server=1e-5, delta_client=1e-5,
+        )
+        assert eps_ab == pytest.approx(eps_ba, rel=1e-2)
+
+    def test_pld_delta_additive(self):
+        """Total delta should equal delta_server + delta_client."""
+        _, total_delta = compose_epsilon(
+            eps_server=2.0, eps_client=3.0,
+            delta_server=1e-5, delta_client=2e-5,
+        )
+        assert total_delta == pytest.approx(3e-5)

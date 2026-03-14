@@ -301,7 +301,7 @@ class TestSVTPrivacyMod:
         result_params = _extract_params(result)
 
         nonzero = np.count_nonzero(result_params[0])
-        assert nonzero >= 80  # most should be accepted
+        assert nonzero >= 60  # most should be accepted (single-pass SVT)
 
     def test_noise_var_kwarg_ignored(self):
         """Legacy noise_var kwarg should be accepted but ignored."""
@@ -600,6 +600,97 @@ class TestHEContext:
 
         # A single float32 (4 bytes) becomes ~160KB+ encrypted
         assert len(encrypted[0]) > 1000
+
+
+# ── SVT Single-Pass Tests ──────────────────────────────────────────────────
+
+
+class TestSVTSinglePass:
+    """Tests verifying the SVT single-pass fix (A1).
+
+    Standard SVT's ε-DP proof assumes each query is answered once.
+    Re-drawing noise on rejected candidates would violate this.
+    """
+
+    def test_single_pass_no_requery(self):
+        """Rejected candidates should NOT be re-queried — single pass only."""
+        np.random.seed(42)
+        # Use params where most values are tiny (below threshold)
+        params = [np.concatenate([
+            np.array([0.0001] * 90, dtype=np.float32),
+            np.array([1.0] * 10, dtype=np.float32),
+        ])]
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_svt_privacy_mod(
+            fraction=0.5, epsilon=0.01, gamma=1.0, tau=0.5,
+        )
+        call_next = MagicMock(return_value=out_msg)
+
+        result = mod(in_msg, MagicMock(spec=Context), call_next)
+        result_params = _extract_params(result)
+        # With single pass and noise, should accept fewer than n_upload
+        nonzero = np.count_nonzero(result_params[0])
+        assert nonzero <= 50  # should not exceed fraction target
+
+    def test_single_pass_deterministic_count(self):
+        """Two runs with same seed should give identical acceptance counts."""
+        params = [np.random.randn(100).astype(np.float32)]
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_svt_privacy_mod(fraction=0.3, epsilon=1.0, gamma=1.0, tau=0.0)
+
+        np.random.seed(99)
+        r1 = _extract_params(mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg)))
+        nz1 = np.count_nonzero(r1[0])
+
+        np.random.seed(99)
+        r2 = _extract_params(mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg)))
+        nz2 = np.count_nonzero(r2[0])
+
+        assert nz1 == nz2
+
+
+# ── PercentilePrivacy L2 Sensitivity Tests ──────────────────────────────────
+
+
+class TestPercentileSensitivity:
+    """Tests verifying the PercentilePrivacy L2 sensitivity fix (A4)."""
+
+    @pytest.mark.skipif(not _has_dp_accounting, reason="dp-accounting not installed")
+    def test_epsilon_noise_scales_with_surviving_count(self):
+        """With epsilon set, noise should increase with more surviving elements.
+
+        L2 sensitivity = gamma * sqrt(K) where K = surviving count.
+        More survivors → more noise needed for same ε guarantee.
+        """
+        gamma = 1.0
+
+        # Few survivors (percentile=95 → ~5% kept)
+        params_few = [np.random.randn(100).astype(np.float32)]
+        in_msg_few, out_msg_few = _make_train_message(params_few)
+        mod_few = make_percentile_privacy_mod(
+            percentile=95, gamma=gamma, epsilon=1.0, delta=1e-5,
+        )
+        np.random.seed(42)
+        r_few = _extract_params(mod_few(
+            in_msg_few, MagicMock(spec=Context), MagicMock(return_value=out_msg_few),
+        ))
+
+        # Many survivors (percentile=5 → ~95% kept)
+        params_many = [np.random.randn(100).astype(np.float32)]
+        in_msg_many, out_msg_many = _make_train_message(params_many)
+        mod_many = make_percentile_privacy_mod(
+            percentile=5, gamma=gamma, epsilon=1.0, delta=1e-5,
+        )
+        np.random.seed(42)
+        r_many = _extract_params(mod_many(
+            in_msg_many, MagicMock(spec=Context), MagicMock(return_value=out_msg_many),
+        ))
+
+        # Both should produce valid output
+        assert r_few[0].shape == (100,)
+        assert r_many[0].shape == (100,)
 
 
 

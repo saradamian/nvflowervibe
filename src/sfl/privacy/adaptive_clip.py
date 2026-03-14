@@ -69,6 +69,9 @@ class AdaptiveClipWrapper(Strategy):
         super().__init__()
         self.strategy = strategy
         self.config = config
+        # Stores the DP event from the most recent quantile query,
+        # so the accountant can compose it into the total budget.
+        self._last_quantile_dp_event = None
 
     def __repr__(self) -> str:
         return f"AdaptiveClipWrapper({self.strategy!r})"
@@ -102,6 +105,9 @@ class AdaptiveClipWrapper(Strategy):
         clip_norm = getattr(self.strategy, "clipping_norm", None)
         current_params = getattr(self.strategy, "current_round_params", None)
 
+        new_clip = None
+        self._last_quantile_dp_event = None
+
         if clip_norm is not None and current_params and results:
             # Compute L2 norms of un-clipped client updates
             norms = []
@@ -127,6 +133,18 @@ class AdaptiveClipWrapper(Strategy):
                 noise = np.random.normal(0, cfg.quantile_noise_multiplier)
                 noisy_sum = max(0.0, min(float(n), raw_sum + noise))
                 fraction_clipped = noisy_sum / n
+
+                # Record the DP cost of this quantile query so the
+                # accountant can compose it into the total budget.
+                # GaussianDpEvent with noise_multiplier = σ/sensitivity
+                # = quantile_noise_multiplier / 1 = quantile_noise_multiplier.
+                try:
+                    from dp_accounting import dp_event as _dp_event
+                    self._last_quantile_dp_event = _dp_event.GaussianDpEvent(
+                        noise_multiplier=cfg.quantile_noise_multiplier
+                    )
+                except ImportError:
+                    pass
             else:
                 fraction_clipped = raw_sum / n
 
@@ -143,8 +161,13 @@ class AdaptiveClipWrapper(Strategy):
                 f"median_norm={float(np.median(norms)):.4f}"
             )
 
-            # Update the inner DP strategy's clipping norm for THIS round
+        # Delegate clipping + noise + aggregation using the CURRENT clip norm.
+        # Per Andrew et al. 2021: quantile estimate from round t updates
+        # the clip for round t+1, not round t.
+        result = self.strategy.aggregate_fit(server_round, results, failures)
+
+        if clip_norm is not None and current_params and results:
+            # Apply the new clip norm AFTER this round's aggregation
             self.strategy.clipping_norm = new_clip
 
-        # Delegate clipping + noise + aggregation to the DP wrapper
-        return self.strategy.aggregate_fit(server_round, results, failures)
+        return result

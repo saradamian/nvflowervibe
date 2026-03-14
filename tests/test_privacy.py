@@ -435,10 +435,10 @@ class TestJointDPComposition:
         assert "dp_epsilon" in metrics
         assert "dp_total_epsilon" in metrics
         assert "dpsgd_epsilon_max" in metrics
-        # Total = server ε + max(client ε) = dp_epsilon + 3.0
-        assert metrics["dp_total_epsilon"] == pytest.approx(
-            metrics["dp_epsilon"] + 3.0
-        )
+        # PLD composition: total should be tighter than basic (server + client)
+        basic_total = metrics["dp_epsilon"] + 3.0
+        assert metrics["dp_total_epsilon"] < basic_total + 1e-6
+        assert metrics["dp_total_epsilon"] > 0
         assert metrics["dpsgd_epsilon_max"] == pytest.approx(3.0)
 
     def test_no_client_dp_no_total(self):
@@ -468,3 +468,159 @@ class TestJointDPComposition:
         _, metrics = wrapper.aggregate_fit(1, results, [])
         assert "dp_epsilon" in metrics
         assert "dp_total_epsilon" not in metrics
+
+
+# ── Adaptive Clip Timing Tests (A2) ─────────────────────────────────────
+
+
+class TestAdaptiveClipTiming:
+    """Verify clip norm is updated AFTER aggregate_fit, not before."""
+
+    @pytest.mark.skipif(not _has_dp_accounting, reason="dp-accounting not installed")
+    def test_clip_unchanged_during_aggregation(self):
+        """The inner strategy should see the OLD clip norm during aggregate_fit."""
+        from sfl.privacy.adaptive_clip import AdaptiveClipWrapper, AdaptiveClipConfig
+        from flwr.common import FitRes, Status, Code, ndarrays_to_parameters as n2p
+
+        inner = MagicMock()
+        inner.clipping_norm = 5.0
+        initial_clip = inner.clipping_norm
+
+        # When aggregate_fit is called, capture the clip norm at call time
+        clip_during_agg = []
+
+        def capture_clip(*args, **kwargs):
+            clip_during_agg.append(inner.clipping_norm)
+            return (n2p([np.array([1.0], dtype=np.float32)]), {})
+
+        inner.aggregate_fit.side_effect = capture_clip
+        inner.current_round_params = [np.zeros(10, dtype=np.float32)]
+
+        cfg = AdaptiveClipConfig(target_quantile=0.5, learning_rate=0.2)
+        wrapper = AdaptiveClipWrapper(inner, cfg)
+
+        # Create results with norms that will trigger a clip update
+        fit_res = FitRes(
+            status=Status(code=Code.OK, message=""),
+            parameters=n2p([np.ones(10, dtype=np.float32) * 10]),
+            num_examples=10, metrics={},
+        )
+        results = [(MagicMock(), fit_res)]
+
+        wrapper.aggregate_fit(1, results, [])
+
+        # During aggregation, clip should have been the ORIGINAL value
+        assert clip_during_agg[0] == initial_clip
+        # After aggregation, clip should have changed
+        assert inner.clipping_norm != initial_clip
+
+
+# ── Quantile Cost Composition Tests (A3) ─────────────────────────────────
+
+
+class TestQuantileCostComposition:
+    """Verify quantile query DP cost is composed into the accountant."""
+
+    @pytest.mark.skipif(not _has_dp_accounting, reason="dp-accounting not installed")
+    def test_quantile_cost_increases_epsilon(self):
+        """When quantile_noise_multiplier > 0, total ε should be higher."""
+        from sfl.privacy.adaptive_clip import AdaptiveClipWrapper, AdaptiveClipConfig
+        from sfl.privacy.accountant import PrivacyAccountant
+        from flwr.common import FitRes, Status, Code, ndarrays_to_parameters as n2p
+
+        def make_wrapped(quantile_noise):
+            inner = MagicMock()
+            inner.clipping_norm = 10.0
+            inner.current_round_params = [np.zeros(10, dtype=np.float32)]
+            inner.aggregate_fit.return_value = (
+                n2p([np.array([1.0], dtype=np.float32)]), {}
+            )
+            ac_cfg = AdaptiveClipConfig(
+                target_quantile=0.5, learning_rate=0.2,
+                quantile_noise_multiplier=quantile_noise,
+            )
+            adaptive = AdaptiveClipWrapper(inner, ac_cfg)
+            accountant = PrivacyAccountant(
+                noise_multiplier=1.0, delta=1e-5, enforce_budget=False,
+            )
+            return _AccountingWrapper(adaptive, accountant)
+
+        w_noisy = make_wrapped(quantile_noise=0.5)
+        w_silent = make_wrapped(quantile_noise=0.0)
+
+        fit_res = FitRes(
+            status=Status(code=Code.OK, message=""),
+            parameters=n2p([np.ones(10, dtype=np.float32)]),
+            num_examples=10, metrics={},
+        )
+        results = [(MagicMock(), fit_res)]
+
+        # Run one round on each
+        _, m_noisy = w_noisy.aggregate_fit(1, results, [])
+        _, m_silent = w_silent.aggregate_fit(1, results, [])
+
+        # Noisy quantile should have higher (or equal) epsilon
+        assert m_noisy["dp_epsilon"] >= m_silent["dp_epsilon"]
+
+
+# ── Low Noise Warning Tests (B4) ─────────────────────────────────────────
+
+
+class TestLowNoiseWarning:
+    """Verify warning is logged when noise_multiplier < 0.3."""
+
+    def test_low_noise_warns(self):
+        """noise_multiplier=0.1 should produce a warning."""
+        import logging
+        with patch("sfl.privacy.dp.logger") as mock_logger:
+            dp_config = DPConfig(noise_multiplier=0.1, clipping_norm=10.0)
+            wrap_strategy_with_dp(FedAvg(), dp_config)
+            mock_logger.warning.assert_called()
+            warning_msg = mock_logger.warning.call_args[0][0]
+            assert "very low" in warning_msg.lower() or "negligible" in warning_msg.lower()
+
+    def test_normal_noise_no_warn(self):
+        """noise_multiplier=1.0 should NOT produce a warning about low noise."""
+        with patch("sfl.privacy.dp.logger") as mock_logger:
+            dp_config = DPConfig(noise_multiplier=1.0, clipping_norm=10.0)
+            wrap_strategy_with_dp(FedAvg(), dp_config)
+            # Check that no warning about low noise was issued
+            for call in mock_logger.warning.call_args_list:
+                assert "very low" not in call[0][0].lower()
+
+
+# ── Budget Dashboard Tests (B7) ──────────────────────────────────────────
+
+
+class TestBudgetDashboard:
+    """Verify per-round budget dashboard logging (B7)."""
+
+    @pytest.mark.skipif(not _has_dp_accounting, reason="dp-accounting not installed")
+    def test_dashboard_logged_each_round(self):
+        """Budget dashboard should log after each aggregate_fit round."""
+        from sfl.privacy.accountant import PrivacyAccountant
+        from flwr.common import FitRes, Status, Code, ndarrays_to_parameters as n2p
+
+        inner = MagicMock()
+        inner.aggregate_fit.return_value = (
+            n2p([np.array([1.0], dtype=np.float32)]), {}
+        )
+
+        accountant = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, enforce_budget=False,
+        )
+        wrapper = _AccountingWrapper(inner, accountant)
+
+        fit_res = FitRes(
+            status=Status(code=Code.OK, message=""),
+            parameters=n2p([np.array([1.0], dtype=np.float32)]),
+            num_examples=10, metrics={},
+        )
+        results = [(MagicMock(), fit_res)]
+
+        with patch("sfl.privacy.dp.logger") as mock_logger:
+            wrapper.aggregate_fit(1, results, [])
+            # Should log the ASCII dashboard
+            info_calls = [str(c) for c in mock_logger.info.call_args_list]
+            dashboard_logged = any("Privacy Budget" in s for s in info_calls)
+            assert dashboard_logged, "Budget dashboard not logged"
