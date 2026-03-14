@@ -86,6 +86,17 @@ Examples:
                         choices=["flower", "nvflare"],
                         help="Simulation backend (default: flower)")
 
+    # Privacy
+    parser.add_argument("--dp", action="store_true",
+                        help="Enable differential privacy")
+    parser.add_argument("--dp-noise", type=float, default=0.1,
+                        help="DP noise multiplier (default: 0.1)")
+    parser.add_argument("--dp-clip", type=float, default=10.0,
+                        help="DP clipping norm (default: 10.0)")
+    parser.add_argument("--dp-mode", type=str, default="server",
+                        choices=["server", "client"],
+                        help="DP mode: server-side or client-side (default: server)")
+
     return parser.parse_args()
 
 
@@ -145,6 +156,20 @@ def run_flower(args: argparse.Namespace, logger) -> int:
 
     client_app = ClientApp(client_fn=client_fn)
     server_app = ServerApp(server_fn=server_fn)
+
+    # If DP is enabled, reconfigure apps
+    if args.dp:
+        # Pass DP config via run_config to server_fn
+        # Flower simulation injects run_config into context
+        import os
+        os.environ["SFL_DP_ENABLED"] = "true"
+        os.environ["SFL_DP_NOISE"] = str(args.dp_noise)
+        os.environ["SFL_DP_CLIP"] = str(args.dp_clip)
+        os.environ["SFL_DP_MODE"] = args.dp_mode
+
+        if args.dp_mode == "client":
+            from flwr.client.mod import fixedclipping_mod
+            client_app = ClientApp(client_fn=client_fn, mods=[fixedclipping_mod])
 
     logger.info("Starting Flower simulation for ESM2 FL...")
 
@@ -287,6 +312,7 @@ def main() -> int:
     logger.info(f"Dataset:       {args.dataset or 'built-in demo (32 seqs)'}")
     logger.info(f"Save dir:      {args.save_dir or 'none'}")
     logger.info(f"Backend:       {args.backend}")
+    logger.info(f"DP:            {'ON ('+args.dp_mode+', noise='+str(args.dp_noise)+', clip='+str(args.dp_clip)+')' if args.dp else 'OFF'}")
     logger.info("-" * 60)
 
     try:
