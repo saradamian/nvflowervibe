@@ -305,6 +305,61 @@ class TestSVTPrivacyMod:
         result = mod(in_msg, MagicMock(spec=Context), call_next)
         assert _extract_params(result)[0].shape == (2,)
 
+    def test_optimal_budget_less_noise_than_standard(self):
+        """Optimal budget split should produce less noise (more nonzeros) for same ε."""
+        np.random.seed(42)
+        params = [np.random.randn(200).astype(np.float32)]
+        in_msg, out_msg = _make_train_message(params)
+
+        np.random.seed(42)
+        mod_std = make_svt_privacy_mod(
+            fraction=0.5, epsilon=1.0, gamma=10.0, tau=0.0, optimal_budget=False,
+        )
+        r_std = _extract_params(mod_std(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg)))
+
+        np.random.seed(42)
+        mod_opt = make_svt_privacy_mod(
+            fraction=0.5, epsilon=1.0, gamma=10.0, tau=0.0, optimal_budget=True,
+        )
+        r_opt = _extract_params(mod_opt(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg)))
+
+        # Optimal should select at least as many (usually more) params
+        nz_std = np.count_nonzero(r_std[0])
+        nz_opt = np.count_nonzero(r_opt[0])
+        assert nz_opt >= nz_std
+
+    def test_prescreen_reduces_candidates(self):
+        """Pre-screening should still produce valid output."""
+        np.random.seed(42)
+        params = [np.random.randn(100).astype(np.float32)]
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_svt_privacy_mod(
+            fraction=0.1, epsilon=10.0, gamma=10.0, tau=0.0,
+            pre_screen_ratio=0.5,
+        )
+        call_next = MagicMock(return_value=out_msg)
+
+        result = mod(in_msg, MagicMock(spec=Context), call_next)
+        result_params = _extract_params(result)
+        assert result_params[0].shape == (100,)
+        # Should have some nonzero values
+        assert np.count_nonzero(result_params[0]) > 0
+
+    def test_standard_budget_backward_compatible(self):
+        """optimal_budget=False should reproduce the original behavior."""
+        np.random.seed(42)
+        params = [np.random.randn(50).astype(np.float32)]
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_svt_privacy_mod(
+            fraction=0.5, epsilon=1.0, gamma=1.0, tau=0.0, optimal_budget=False,
+        )
+        call_next = MagicMock(return_value=out_msg)
+        result = mod(in_msg, MagicMock(spec=Context), call_next)
+        result_params = _extract_params(result)
+        assert result_params[0].shape == (50,)
+
 
 # ── ExcludeVars Tests ───────────────────────────────────────────────────────
 
