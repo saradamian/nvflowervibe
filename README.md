@@ -9,8 +9,10 @@ This project provides:
 - **Extensible base framework** — abstract `BaseFederatedClient` with type-safe contracts, configurable `FederationConfig`, shared type aliases
 - **ESM2 protein model application** — federated fine-tuning of ESM2 (8M–35M params) via masked language modeling, built on the base framework
 - **NVFlare + Flower integration** — run with pure Flower simulation or NVFlare orchestration
+- **Layered privacy** — differential privacy (server + client DP-SGD), PLD-based accounting with automatic budget enforcement, adaptive clipping, privacy filters, SecAgg+, and HE
+- **Byzantine robustness** — Multi-Krum and Trimmed Mean aggregation strategies
 - **Configurable** via YAML, environment variables, or CLI
-- **134 tests** with GitHub Actions CI on every PR
+- **132 tests** with GitHub Actions CI on every PR
 
 ### Applications
 
@@ -36,9 +38,11 @@ sfl/
 │   ├── types.py                # Shared types: Parameters, Metrics, Config, ClientUpdate
 │   ├── client/
 │   │   ├── base.py             # BaseFederatedClient (abstract, device-aware)
+│   │   ├── dp_client.py        # Per-example DP-SGD via Opacus
 │   │   └── sum_client.py       # SumClient — demo implementation
 │   ├── server/
 │   │   ├── strategy.py         # SumFedAvg — custom aggregation strategy
+│   │   ├── robust.py           # Multi-Krum & Trimmed Mean (Byzantine-robust)
 │   │   └── app.py              # Server application (sum demo)
 │   ├── esm2/
 │   │   ├── __init__.py         # Exports client_app, server_app (Flower apps)
@@ -49,8 +53,10 @@ sfl/
 │   │   └── server.py           # FedAvg seeded with pretrained ESM2 weights
 │   ├── privacy/
 │   │   ├── __init__.py         # Privacy module exports
-│   │   ├── dp.py               # Flower DP strategy wrappers
-│   │   ├── filters.py          # NVFlare-inspired privacy filters (Flower mods)
+│   │   ├── accountant.py       # PLD-based privacy accounting + budget enforcement
+│   │   ├── adaptive_clip.py    # Adaptive clipping norm (Andrew et al. 2021)
+│   │   ├── dp.py               # DP wrappers, noise calibration, accounting wrapper
+│   │   ├── filters.py          # Privacy filters (Percentile, SVT, Compression)
 │   │   ├── he.py               # Homomorphic encryption (TenSEAL CKKS)
 │   │   └── secagg.py           # SecAgg+ configuration
 │   └── utils/
@@ -64,13 +70,19 @@ sfl/
 ├── tests/
 │   ├── test_client.py          # SumClient + FederationConfig tests
 │   ├── test_config.py          # Config utility tests
-│   ├── test_structure.py       # Package layout + API contract tests
 │   ├── test_integration.py     # End-to-end aggregation pipeline tests
+│   ├── test_privacy.py         # DP wrapping, adaptive clip, SecAgg, server DP
+│   ├── test_accountant.py      # Privacy accountant, budget, composition
+│   ├── test_filters.py         # Percentile, SVT, compression, HE filters
+│   ├── test_dpsgd.py           # Per-example DP-SGD (Opacus)
+│   ├── test_robust.py          # Multi-Krum, Trimmed Mean aggregation
 │   ├── test_esm2_config.py     # ESM2RunConfig + FederationConfig composition
 │   ├── test_esm2_model.py      # Model loading, parameter roundtrip
 │   ├── test_esm2_dataset.py    # MLM masking, partitioning
 │   ├── test_esm2_client.py     # ESM2Client inheritance, training, evaluation
 │   └── test_esm2_server.py     # Server FedAvg setup, config overrides
+├── SECURITY_AUDIT.md           # Security audit findings
+├── UPGRADE_PLAN.md             # Upgrade plan for security improvements
 ├── docs/
 │   ├── DEPLOYMENT.md           # Deployment guide (SimEnv → Production)
 │   ├── INSTALL_NOTE.md         # Installation & troubleshooting
@@ -129,24 +141,47 @@ GPU auto-detection: if CUDA GPUs are available, they are automatically allocated
 
 ### 4. Privacy & Security
 
-SFL supports layered privacy: DP, NVFlare-inspired privacy filters,
-homomorphic encryption, and confidential computing.
+SFL supports layered privacy: DP with automatic budget enforcement,
+adaptive clipping, per-example DP-SGD, privacy filters, gradient
+compression, Byzantine-robust aggregation, SecAgg+, and HE.
 
 ```bash
-# Differential privacy
+# Server-side DP with automatic privacy accounting
 python jobs/esm2_runner.py --dp --dp-noise 0.1
+
+# Client-side DP
+python jobs/esm2_runner.py --dp --dp-mode client --dp-noise 0.5
+
+# Adaptive clipping (Andrew et al. 2021)
+python jobs/esm2_runner.py --dp --dp-adaptive-clip --dp-target-quantile 0.5
+
+# Per-example DP-SGD via Opacus (client-local)
+python jobs/esm2_runner.py --dpsgd --dpsgd-noise 1.0 --dpsgd-clip 1.0
 
 # Percentile privacy filter (only share top 10% of weight diffs)
 python jobs/esm2_runner.py --percentile-privacy 10
 
+# Calibrated percentile noise (formal ε-DP guarantee)
+python jobs/esm2_runner.py --percentile-privacy 10 --percentile-epsilon 1.0
+
 # SVT differential privacy (formal ε-DP)
 python jobs/esm2_runner.py --svt-privacy --svt-epsilon 0.1
+
+# Gradient compression (TopK sparsification + noise)
+python jobs/esm2_runner.py --compress 0.1 --compress-topk
 
 # Exclude embedding layers from aggregation
 python jobs/esm2_runner.py --exclude-layers 0,1
 
-# Combine all layers
-python jobs/esm2_runner.py --dp --percentile-privacy 10 --exclude-layers 0,1
+# Byzantine-robust aggregation (Multi-Krum)
+python jobs/esm2_runner.py --aggregation krum --krum-byzantine 1
+
+# Byzantine-robust aggregation (Trimmed Mean)
+python jobs/esm2_runner.py --aggregation trimmed-mean --trim-ratio 0.1
+
+# Combine multiple layers
+python jobs/esm2_runner.py --dp --dp-adaptive-clip \
+    --percentile-privacy 10 --exclude-layers 0,1
 ```
 
 See [docs/PRIVACY.md](docs/PRIVACY.md) for the full privacy guide,
@@ -537,6 +572,29 @@ click>=8.1.0,<8.2.0  # Important: Click 8.2+ breaks Typer
 
 ## Security Features (Production Mode)
 
+### Differential Privacy
+- **Server-side DP** — Gaussian noise added to aggregate (Flower strategy wrapper)
+- **Client-side DP-SGD** — per-example gradient clipping via Opacus
+- **PLD-based accounting** — tight (ε,δ)-DP tracking via `dp-accounting`
+- **Automatic budget enforcement** — training auto-stops when ε exceeds budget
+- **Adaptive clipping** — geometric norm update (Andrew et al. 2021) with optional noisy quantile
+- **Joint composition** — server + client DP-SGD epsilon composed via sequential theorem
+- **Noise calibration** — `calibrate_gaussian_sigma()` computes minimal noise for target (ε,δ)
+
+### Privacy Filters
+- **PercentilePrivacy** — top-K% sparsification with optional calibrated noise
+- **SVT** — Sparse Vector Technique with optimal budget allocation (Lyu et al. 2017)
+- **Gradient Compression** — TopK / random masking with (ε,δ)-calibrated noise
+- **ExcludeVars** — zero out sensitive layers (embeddings, classifier heads)
+
+### Byzantine Robustness
+- **Multi-Krum** — tolerates up to f Byzantine clients (Blanchard et al., NeurIPS 2017)
+- **Trimmed Mean** — coordinate-wise outlier trimming (Yin et al., ICML 2018)
+
+### Secure Aggregation & Encryption
+- **SecAgg+** — Flower's secret-sharing protocol; server sees only the aggregate
+- **Homomorphic Encryption** — TenSEAL CKKS for encrypted aggregation (demo-scale)
+
 ### TLS/SSL Encryption
 - All communication encrypted with certificates
 - Mutual TLS (mTLS) authentication
@@ -548,10 +606,6 @@ click>=8.1.0,<8.2.0  # Important: Click 8.2+ breaks Typer
 ### Audit Logging
 - All actions logged
 - Compliance-ready audit trail
-
-### Secure Aggregation (Optional)
-- Homomorphic encryption support
-- Differential privacy
 
 ---
 
