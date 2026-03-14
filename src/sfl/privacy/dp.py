@@ -122,6 +122,39 @@ class DPConfig:
     clip_learning_rate: float = 0.2
     quantile_noise_multiplier: float = 0.0
 
+    def __post_init__(self):
+        if self.noise_multiplier < 0:
+            raise ValueError(
+                f"noise_multiplier must be non-negative, got {self.noise_multiplier}"
+            )
+        if self.clipping_norm <= 0:
+            raise ValueError(
+                f"clipping_norm must be positive, got {self.clipping_norm}"
+            )
+        if self.num_sampled_clients > self.num_total_clients:
+            raise ValueError(
+                f"num_sampled_clients ({self.num_sampled_clients}) must be "
+                f"<= num_total_clients ({self.num_total_clients})"
+            )
+        if self.target_delta <= 0 or self.target_delta >= 1:
+            raise ValueError(
+                f"target_delta must be in (0, 1), got {self.target_delta}"
+            )
+        if self.max_epsilon <= 0:
+            raise ValueError(
+                f"max_epsilon must be positive, got {self.max_epsilon}"
+            )
+        if self.mode not in ("server", "client"):
+            raise ValueError(
+                f"mode must be 'server' or 'client', got {self.mode!r}"
+            )
+        if self.adaptive_clipping and self.mode == "client":
+            logger.warning(
+                "Adaptive clipping with client-side DP requires a trusted "
+                "aggregator for the quantile queries. Consider using "
+                "server-side DP or setting quantile_noise_multiplier > 0."
+            )
+
 
 def wrap_strategy_with_dp(
     strategy: Strategy,

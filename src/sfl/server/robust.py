@@ -33,6 +33,41 @@ from sfl.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+
+def verify_update_norms(
+    results: List[Tuple[ClientProxy, FitRes]],
+    max_norm: float,
+) -> List[Tuple[ClientProxy, FitRes]]:
+    """Filter client updates whose L2 norm exceeds ``max_norm``.
+
+    This is a defence-in-depth check (H4): even when the DP wrapper
+    clips updates, a compromised client could send unclipped
+    parameters directly. Verifying norms server-side before
+    aggregation prevents over-sized updates from poisoning the
+    aggregate.
+
+    Args:
+        results: List of (ClientProxy, FitRes) from the round.
+        max_norm: Maximum allowed L2 norm for the flattened update.
+
+    Returns:
+        Filtered list with violating clients removed.
+    """
+    kept = []
+    for proxy, res in results:
+        flat = np.concatenate(
+            [p.ravel() for p in parameters_to_ndarrays(res.parameters)]
+        )
+        norm = float(np.linalg.norm(flat))
+        if norm <= max_norm:
+            kept.append((proxy, res))
+        else:
+            logger.warning(
+                "Rejected update from client (norm=%.2f > max=%.2f)",
+                norm, max_norm,
+            )
+    return kept
+
 # Threshold above which random projection is used for Krum distances.
 # For ESM2 (8M params), computing O(n²·d) pairwise distances is
 # prohibitively slow. Johnson–Lindenstrauss projection to k dimensions

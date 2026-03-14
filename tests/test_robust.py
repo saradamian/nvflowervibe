@@ -228,3 +228,36 @@ class TestSpectralFilterFedAvg:
         aggregated = parameters_to_ndarrays(params)
         # Should be near 1.0, not pulled toward 50
         np.testing.assert_allclose(aggregated[0][:5], [1.0] * 5, atol=1.0)
+
+
+# ── Norm Verification (H4) ─────────────────────────────────────────────────
+
+class TestVerifyUpdateNorms:
+    """Tests for verify_update_norms (H4)."""
+
+    def test_rejects_oversized_update(self):
+        """Updates exceeding max_norm should be filtered out."""
+        from sfl.server.robust import verify_update_norms
+
+        small = _make_result([[1.0, 0.0, 0.0]])  # norm = 1
+        big = _make_result([[100.0, 100.0, 100.0]])  # norm ≈ 173
+
+        results = [small, big]
+        filtered = verify_update_norms(results, max_norm=10.0)
+        assert len(filtered) == 1
+
+    def test_keeps_valid_updates(self):
+        """Updates within max_norm should be kept."""
+        from sfl.server.robust import verify_update_norms
+
+        results = [_make_result([[1.0, 1.0]]), _make_result([[2.0, 2.0]])]
+        filtered = verify_update_norms(results, max_norm=100.0)
+        assert len(filtered) == 2
+
+    def test_empty_on_all_rejected(self):
+        """If all updates exceed max_norm, result should be empty."""
+        from sfl.server.robust import verify_update_norms
+
+        results = [_make_result([[100.0] * 10])]
+        filtered = verify_update_norms(results, max_norm=1.0)
+        assert len(filtered) == 0

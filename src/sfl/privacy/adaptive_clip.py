@@ -22,6 +22,7 @@ from flwr.server.client_proxy import ClientProxy
 from flwr.server.strategy import Strategy
 
 from sfl.utils.logging import get_logger
+from sfl.utils.rng import secure_rng
 
 logger = get_logger(__name__)
 
@@ -130,7 +131,7 @@ class AdaptiveClipWrapper(Strategy):
                 # Per Andrew et al. 2021 §3.2: sensitivity of the sum
                 # of binary indicators is 1 (one client changes the sum
                 # by at most 1).  Noise std = quantile_noise_multiplier.
-                noise = np.random.normal(0, cfg.quantile_noise_multiplier)
+                noise = secure_rng().normal(0, cfg.quantile_noise_multiplier)
                 noisy_sum = max(0.0, min(float(n), raw_sum + noise))
                 fraction_clipped = noisy_sum / n
 

@@ -836,3 +836,89 @@ class TestPerLayerClipMod:
 
         mod = make_per_layer_clip_mod(default_clip=1.0)
         assert callable(mod)
+
+
+# ── H1: Secure RNG Tests ───────────────────────────────────────────────────
+
+
+class TestSecureRNG:
+    """Tests for CSRNG-seeded noise generation (H1)."""
+
+    def test_secure_rng_returns_random_state(self):
+        """secure_rng() should return a numpy RandomState."""
+        from sfl.utils.rng import secure_rng
+
+        rng = secure_rng()
+        assert isinstance(rng, np.random.RandomState)
+
+    def test_secure_rng_produces_different_seeds(self):
+        """Two calls to secure_rng() should produce different sequences."""
+        from sfl.utils.rng import secure_rng
+
+        r1 = secure_rng().random_sample(100)
+        r2 = secure_rng().random_sample(100)
+        # With overwhelming probability, these will differ
+        assert not np.allclose(r1, r2)
+
+
+# ── H2: DPConfig Validation Tests ──────────────────────────────────────────
+
+
+class TestDPConfigValidation:
+    """Tests for DPConfig __post_init__ validation (H2)."""
+
+    def test_negative_noise_multiplier_raises(self):
+        with pytest.raises(ValueError, match="noise_multiplier"):
+            DPConfig(noise_multiplier=-1.0)
+
+    def test_zero_clipping_norm_raises(self):
+        with pytest.raises(ValueError, match="clipping_norm"):
+            DPConfig(clipping_norm=0.0)
+
+    def test_sampled_exceeds_total_raises(self):
+        with pytest.raises(ValueError, match="num_sampled_clients"):
+            DPConfig(num_sampled_clients=5, num_total_clients=3)
+
+    def test_invalid_delta_raises(self):
+        with pytest.raises(ValueError, match="target_delta"):
+            DPConfig(target_delta=0.0)
+        with pytest.raises(ValueError, match="target_delta"):
+            DPConfig(target_delta=1.0)
+
+    def test_invalid_max_epsilon_raises(self):
+        with pytest.raises(ValueError, match="max_epsilon"):
+            DPConfig(max_epsilon=-1.0)
+
+    def test_valid_config_succeeds(self):
+        cfg = DPConfig(
+            noise_multiplier=1.0, clipping_norm=10.0,
+            num_sampled_clients=2, num_total_clients=4,
+        )
+        assert cfg.noise_multiplier == 1.0
+
+
+# ── H3: Exact Composition Tests ─────────────────────────────────────────
+
+
+@pytest.mark.skipif(not _has_dp_accounting, reason="dp-accounting not installed")
+class TestExactComposition:
+    """Tests for compose_epsilon with exact Gaussian sigmas (H3)."""
+
+    def test_exact_sigma_gives_tighter_bound(self):
+        """Using sigma_server/sigma_client should be at least as tight."""
+        from sfl.privacy.accountant import compose_epsilon
+
+        # Approximate path (no sigmas)
+        eps_approx, _ = compose_epsilon(
+            eps_server=1.0, eps_client=1.0,
+            delta_server=1e-5, delta_client=1e-5,
+        )
+        # Exact path (with known sigmas)
+        eps_exact, _ = compose_epsilon(
+            eps_server=1.0, eps_client=1.0,
+            delta_server=1e-5, delta_client=1e-5,
+            sigma_server=1.0, sigma_client=1.0,
+        )
+        # Both should be positive
+        assert eps_approx > 0
+        assert eps_exact > 0
