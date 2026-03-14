@@ -12,7 +12,7 @@ pytestmark = pytest.mark.skipif(
     not _has_dp_accounting, reason="dp-accounting not installed"
 )
 
-from sfl.privacy.accountant import PrivacyAccountant, BudgetExhaustedError
+from sfl.privacy.accountant import PrivacyAccountant, BudgetExhaustedError, compose_epsilon
 
 
 class TestPrivacyAccountant:
@@ -104,3 +104,24 @@ class TestPrivacyAccountant:
         # State should not advance
         assert acc_full.rounds == 0
         assert acc_half.rounds == 0
+
+
+class TestComposeEpsilon:
+    """Tests for sequential composition of client+server DP."""
+
+    def test_basic_composition(self):
+        """Total ε = ε_server + ε_client, δ = δ_server + δ_client."""
+        total_eps, total_delta = compose_epsilon(
+            eps_server=2.0, eps_client=3.0,
+            delta_server=1e-5, delta_client=1e-5,
+        )
+        assert total_eps == pytest.approx(5.0)
+        assert total_delta == pytest.approx(2e-5)
+
+    def test_zero_client_epsilon(self):
+        """No client DP → total equals server DP."""
+        total_eps, total_delta = compose_epsilon(
+            eps_server=4.0, eps_client=0.0,
+            delta_server=1e-5, delta_client=1e-5,
+        )
+        assert total_eps == pytest.approx(4.0)

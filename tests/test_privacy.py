@@ -388,3 +388,83 @@ class TestSumServerDP:
 
 
         assert callable(build_secagg_config)
+
+
+# ── Joint DP composition ───────────────────────────────────────────────────
+
+
+@pytest.mark.skipif(not _has_dp_accounting, reason="dp-accounting not installed")
+class TestJointDPComposition:
+    """Tests for _AccountingWrapper composing client+server DP."""
+
+    def test_metrics_include_total_epsilon(self):
+        """When clients report dpsgd_epsilon, aggregate metrics should
+        include dp_total_epsilon = server ε + max client ε."""
+        from sfl.privacy.dp import _AccountingWrapper
+        from sfl.privacy.accountant import PrivacyAccountant
+        from flwr.common import FitRes, Status, Code, ndarrays_to_parameters as n2p
+
+        inner = MagicMock()
+        inner.aggregate_fit.return_value = (
+            n2p([np.array([1.0], dtype=np.float32)]),
+            {},
+        )
+
+        accountant = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, enforce_budget=False,
+        )
+        wrapper = _AccountingWrapper(inner, accountant)
+
+        # Simulate two clients reporting dpsgd_epsilon
+        fit_res_1 = FitRes(
+            status=Status(code=Code.OK, message=""),
+            parameters=n2p([np.array([1.0], dtype=np.float32)]),
+            num_examples=10,
+            metrics={"dpsgd_epsilon": 2.5},
+        )
+        fit_res_2 = FitRes(
+            status=Status(code=Code.OK, message=""),
+            parameters=n2p([np.array([1.0], dtype=np.float32)]),
+            num_examples=10,
+            metrics={"dpsgd_epsilon": 3.0},
+        )
+        results = [(MagicMock(), fit_res_1), (MagicMock(), fit_res_2)]
+
+        _, metrics = wrapper.aggregate_fit(1, results, [])
+
+        assert "dp_epsilon" in metrics
+        assert "dp_total_epsilon" in metrics
+        assert "dpsgd_epsilon_max" in metrics
+        # Total = server ε + max(client ε) = dp_epsilon + 3.0
+        assert metrics["dp_total_epsilon"] == pytest.approx(
+            metrics["dp_epsilon"] + 3.0
+        )
+        assert metrics["dpsgd_epsilon_max"] == pytest.approx(3.0)
+
+    def test_no_client_dp_no_total(self):
+        """Without dpsgd_epsilon in results, dp_total_epsilon is absent."""
+        from sfl.privacy.dp import _AccountingWrapper
+        from sfl.privacy.accountant import PrivacyAccountant
+        from flwr.common import FitRes, Status, Code, ndarrays_to_parameters as n2p
+
+        inner = MagicMock()
+        inner.aggregate_fit.return_value = (
+            n2p([np.array([1.0], dtype=np.float32)]),
+            {},
+        )
+
+        accountant = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, enforce_budget=False,
+        )
+        wrapper = _AccountingWrapper(inner, accountant)
+
+        fit_res = FitRes(
+            status=Status(code=Code.OK, message=""),
+            parameters=n2p([np.array([1.0], dtype=np.float32)]),
+            num_examples=10, metrics={},
+        )
+        results = [(MagicMock(), fit_res)]
+
+        _, metrics = wrapper.aggregate_fit(1, results, [])
+        assert "dp_epsilon" in metrics
+        assert "dp_total_epsilon" not in metrics

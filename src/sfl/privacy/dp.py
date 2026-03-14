@@ -258,6 +258,25 @@ class _AccountingWrapper(Strategy):
                 metrics["dp_epsilon"] = self.privacy_accountant.epsilon
                 metrics["dp_budget_exhausted"] = True
 
+            # Compose with client-side DP-SGD epsilon if present
+            client_epsilons = [
+                res.metrics.get("dpsgd_epsilon", 0.0)
+                for _, res in results
+                if res.metrics
+            ]
+            max_client_eps = max(client_epsilons) if client_epsilons else 0.0
+            if max_client_eps > 0:
+                from sfl.privacy.accountant import compose_epsilon
+                total_eps, total_delta = compose_epsilon(
+                    eps_server=metrics.get("dp_epsilon", 0.0),
+                    eps_client=max_client_eps,
+                    delta_server=self.privacy_accountant._delta,
+                    delta_client=self.privacy_accountant._delta,
+                )
+                metrics["dp_total_epsilon"] = total_eps
+                metrics["dp_total_delta"] = total_delta
+                metrics["dpsgd_epsilon_max"] = max_client_eps
+
         return params, metrics
 
     # ── Delegate everything else ─────────────────────────────────────────
