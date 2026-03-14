@@ -526,6 +526,31 @@ class TestGradientCompressionMod:
         # Values should be modified by calibrated noise
         assert not np.allclose(result_params[0], [1.0, 2.0, 3.0, 4.0, 5.0])
 
+    @pytest.mark.skipif(
+        not _has_dp_accounting,
+        reason="dp-accounting not installed",
+    )
+    def test_dp_forces_topk_over_random_mask(self):
+        """When epsilon is set, use_random_mask must be forced to False (C1)."""
+        mod = make_gradient_compression_mod(
+            compression_ratio=0.5, use_random_mask=True,
+            epsilon=1.0, delta=1e-5, clipping_norm=5.0,
+        )
+        # The mod should function with deterministic TopK
+        params = [np.array([0.1, 0.5, 0.9, 0.2, 0.8], dtype=np.float32)]
+        in_msg, out_msg = _make_train_message(params)
+
+        np.random.seed(10)
+        r1 = _extract_params(mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg)))
+        np.random.seed(20)
+        r2 = _extract_params(mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg)))
+
+        # With TopK, same indices should be selected (mask is deterministic);
+        # only noise differs
+        mask1 = r1[0] != 0
+        mask2 = r2[0] != 0
+        np.testing.assert_array_equal(mask1, mask2)
+
 
 # ── HE Tests ───────────────────────────────────────────────────────────────
 
