@@ -107,6 +107,8 @@ class DPConfig:
         adaptive_clipping: Enable adaptive clipping norm (Andrew et al. 2021).
         target_quantile: Target fraction of unclipped updates (0–1).
         clip_learning_rate: Geometric step size for clip norm update.
+        quantile_noise_multiplier: Noise multiplier for private quantile
+            tracking. 0 = non-private (testing only).
     """
     noise_multiplier: float = 0.1
     clipping_norm: float = 10.0
@@ -118,6 +120,7 @@ class DPConfig:
     adaptive_clipping: bool = False
     target_quantile: float = 0.5
     clip_learning_rate: float = 0.2
+    quantile_noise_multiplier: float = 0.0
 
 
 def wrap_strategy_with_dp(
@@ -187,6 +190,7 @@ def wrap_strategy_with_dp(
         ac_cfg = AdaptiveClipConfig(
             target_quantile=dp_config.target_quantile,
             learning_rate=dp_config.clip_learning_rate,
+            quantile_noise_multiplier=dp_config.quantile_noise_multiplier,
         )
         wrapped = AdaptiveClipWrapper(wrapped, ac_cfg)
         logger.info(

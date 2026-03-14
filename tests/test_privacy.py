@@ -223,6 +223,35 @@ class TestAdaptiveClipWrapper:
         wrapper.aggregate_fit(1, results, [])
         assert inner.clipping_norm >= cfg.clip_min
 
+    def test_noisy_quantile_stays_bounded(self):
+        """With quantile_noise_multiplier>0, fraction_clipped stays in [0,1]."""
+        from sfl.privacy.adaptive_clip import AdaptiveClipWrapper, AdaptiveClipConfig
+
+        inner = MagicMock()
+        inner.clipping_norm = 5.0
+        inner.current_round_params = [np.array([0.0], dtype=np.float32)]
+        inner.aggregate_fit.return_value = (None, {})
+
+        cfg = AdaptiveClipConfig(
+            target_quantile=0.5,
+            quantile_noise_multiplier=10.0,  # very large noise
+        )
+        wrapper = AdaptiveClipWrapper(inner, cfg)
+
+        from flwr.common import FitRes, Status, Code, ndarrays_to_parameters as n2p
+        fit_res = FitRes(
+            status=Status(code=Code.OK, message=""),
+            parameters=n2p([np.array([1.0], dtype=np.float32)]),
+            num_examples=1, metrics={},
+        )
+        results = [(MagicMock(), fit_res)]
+
+        # Run many rounds; clip must always stay within bounds
+        np.random.seed(42)
+        for r in range(20):
+            wrapper.aggregate_fit(r + 1, results, [])
+            assert cfg.clip_min <= inner.clipping_norm <= cfg.clip_max
+
 
 # ── SecAggConfig ────────────────────────────────────────────────────────────
 

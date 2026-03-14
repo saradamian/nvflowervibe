@@ -35,19 +35,31 @@ class AdaptiveClipConfig:
         learning_rate: Step size for geometric clip norm update.
         clip_min: Floor for the clipping norm.
         clip_max: Ceiling for the clipping norm.
+        quantile_noise_multiplier: Gaussian noise multiplier for the
+            clipped-fraction estimate. Required for DP-private quantile
+            tracking (Andrew et al. 2021 §3.2). Sensitivity is 1/n
+            (one client flips at most one binary indicator), so noise
+            std = quantile_noise_multiplier / n. Set to 0.0 to disable
+            (non-private, for testing only).
     """
     target_quantile: float = 0.5
     learning_rate: float = 0.2
     clip_min: float = 0.1
     clip_max: float = 100.0
+    quantile_noise_multiplier: float = 0.0
 
 
 class AdaptiveClipWrapper(Strategy):
     """Wraps a DP strategy to adaptively update the clipping norm.
 
     After each round, estimates what fraction of client updates exceeded
-    the current clip norm. Adjusts clip norm toward target_quantile using
-    the geometric update rule from Andrew et al. (2021).
+    the current clip norm. When ``quantile_noise_multiplier > 0``, adds
+    calibrated Gaussian noise to the binary clipped/not-clipped indicators
+    before computing the fraction, ensuring the quantile estimate itself
+    satisfies DP (Andrew et al. 2021 §3.2).
+
+    Adjusts clip norm toward target_quantile using the geometric update
+    rule from Andrew et al. (2021).
 
     The wrapped strategy must have ``clipping_norm`` and
     ``current_round_params`` attributes (as Flower's DP wrappers do).
@@ -103,11 +115,22 @@ class AdaptiveClipWrapper(Strategy):
                 )
                 norms.append(float(np.linalg.norm(flat)))
 
-            # Fraction exceeding current clip norm
-            fraction_clipped = sum(1 for n in norms if n > clip_norm) / len(norms)
+            # Fraction exceeding current clip norm (with DP noise)
+            n = len(norms)
+            raw_sum = sum(1 for norm in norms if norm > clip_norm)
+
+            cfg = self.config
+            if cfg.quantile_noise_multiplier > 0:
+                # Per Andrew et al. 2021 §3.2: sensitivity of the sum
+                # of binary indicators is 1 (one client changes the sum
+                # by at most 1).  Noise std = quantile_noise_multiplier.
+                noise = np.random.normal(0, cfg.quantile_noise_multiplier)
+                noisy_sum = max(0.0, min(float(n), raw_sum + noise))
+                fraction_clipped = noisy_sum / n
+            else:
+                fraction_clipped = raw_sum / n
 
             # Geometric update (Andrew et al., 2021)
-            cfg = self.config
             new_clip = clip_norm * math.exp(
                 cfg.learning_rate * (fraction_clipped - cfg.target_quantile)
             )
