@@ -4,7 +4,6 @@ and homomorphic encryption support.
 """
 
 from unittest.mock import MagicMock, patch
-import unittest
 
 import numpy as np
 import pytest
@@ -254,7 +253,7 @@ class TestExcludeVarsMod:
 # ── HE Tests ───────────────────────────────────────────────────────────────
 
 
-@unittest.skipUnless(_has_tenseal, "tenseal not installed")
+@pytest.mark.skipif(not _has_tenseal, reason="tenseal not installed")
 class TestHEContext:
     """Tests for homomorphic encryption (requires tenseal)."""
 
