@@ -24,8 +24,10 @@ from sfl.privacy.filters import (
     make_percentile_privacy_mod,
     make_svt_privacy_mod,
     make_exclude_vars_mod,
+    make_gradient_compression_mod,
     PercentilePrivacyConfig,
     SVTPrivacyConfig,
+    GradientCompressionConfig,
 )
 from sfl.privacy.secagg import build_secagg_config, make_secagg_main, SecAggConfig
 
@@ -52,8 +54,10 @@ __all__ = [
     "make_percentile_privacy_mod",
     "make_svt_privacy_mod",
     "make_exclude_vars_mod",
+    "make_gradient_compression_mod",
     "PercentilePrivacyConfig",
     "SVTPrivacyConfig",
+    "GradientCompressionConfig",
     "PrivacyAccountant",
     "AccountingConfig",
     "HEContext",

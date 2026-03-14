@@ -131,6 +131,14 @@ Examples:
     parser.add_argument("--exclude-layers", type=str, default=None,
                         help="Comma-separated parameter indices to exclude (e.g. '0,1')")
 
+    # Gradient compression
+    parser.add_argument("--compress", type=float, default=None, metavar="RATIO",
+                        help="Gradient compression: keep this fraction of values (e.g. 0.1)")
+    parser.add_argument("--compress-noise", type=float, default=0.01,
+                        help="Noise scale for compressed gradients (default: 0.01)")
+    parser.add_argument("--compress-topk", action="store_true",
+                        help="Use deterministic TopK instead of random masking")
+
     # Secure Aggregation
     parser.add_argument("--secagg", action="store_true",
                         help="Enable SecAgg+ (secure aggregation)")
@@ -240,6 +248,15 @@ def run_flower(args: argparse.Namespace, logger) -> int:
         from sfl.privacy.filters import make_exclude_vars_mod
         indices = [int(x.strip()) for x in args.exclude_layers.split(",")]
         client_mods.append(make_exclude_vars_mod(exclude_indices=indices))
+    if args.compress is not None:
+        from sfl.privacy.filters import make_gradient_compression_mod
+        client_mods.append(
+            make_gradient_compression_mod(
+                compression_ratio=args.compress,
+                noise_scale=args.compress_noise,
+                use_random_mask=not args.compress_topk,
+            )
+        )
     if args.secagg:
         from flwr.client.mod import secaggplus_mod
         client_mods.append(secaggplus_mod)

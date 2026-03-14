@@ -171,6 +171,26 @@ def parse_args() -> argparse.Namespace:
         help="Pre-screen ratio: run SVT on top X%% by magnitude (default: 1.0, no pre-screening)",
     )
 
+    # Gradient compression
+    parser.add_argument(
+        "--compress",
+        type=float,
+        default=None,
+        metavar="RATIO",
+        help="Gradient compression: keep this fraction of values (e.g. 0.1)",
+    )
+    parser.add_argument(
+        "--compress-noise",
+        type=float,
+        default=0.01,
+        help="Noise scale for compressed gradients (default: 0.01)",
+    )
+    parser.add_argument(
+        "--compress-topk",
+        action="store_true",
+        help="Use deterministic TopK instead of random masking",
+    )
+
     # Secure Aggregation
     parser.add_argument(
         "--secagg",
@@ -275,6 +295,15 @@ def main() -> int:
                 fraction=args.svt_fraction, epsilon=args.svt_epsilon,
                 optimal_budget=not args.svt_no_optimal,
                 pre_screen_ratio=args.svt_prescreen,
+            )
+        )
+    if args.compress is not None:
+        from sfl.privacy.filters import make_gradient_compression_mod
+        client_mods.append(
+            make_gradient_compression_mod(
+                compression_ratio=args.compress,
+                noise_scale=args.compress_noise,
+                use_random_mask=not args.compress_topk,
             )
         )
     if args.secagg:
