@@ -136,6 +136,9 @@ def server_fn(context: Context) -> ServerAppComponents:
                 os.environ.get("SFL_DP_QUANTILE_NOISE", "0.0")
             ),
             accounting_backend=os.environ.get("SFL_DP_ACCOUNTING_BACKEND", "pld"),
+            shuffle_model=(
+                os.environ.get("SFL_DP_SHUFFLE", "").lower() == "true"
+            ),
         )
         strategy = wrap_strategy_with_dp(strategy, dp_config)
     
