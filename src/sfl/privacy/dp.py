@@ -30,6 +30,57 @@ from sfl.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+try:
+    from dp_accounting.pld.privacy_loss_distribution import (
+        from_gaussian_mechanism,
+    )
+    _HAS_DP_ACCOUNTING = True
+except ImportError:
+    _HAS_DP_ACCOUNTING = False
+
+
+def calibrate_gaussian_sigma(
+    epsilon: float,
+    delta: float,
+    sensitivity: float,
+) -> float:
+    """Compute σ for the Gaussian mechanism via binary search on the PLD.
+
+    Returns the smallest σ such that adding N(0, σ²) noise to a function
+    with L2 sensitivity ``sensitivity`` satisfies (ε,δ)-DP.
+
+    Based on the analytic Gaussian mechanism (Balle & Wang, 2018).
+
+    Args:
+        epsilon: Target ε (must be > 0).
+        delta: Target δ (must be > 0).
+        sensitivity: L2 sensitivity of the function.
+
+    Returns:
+        Noise standard deviation σ.
+
+    Raises:
+        ImportError: If dp-accounting is not installed.
+        ValueError: If epsilon or delta are non-positive.
+    """
+    if not _HAS_DP_ACCOUNTING:
+        raise ImportError(
+            "dp-accounting is required for noise calibration. "
+            "Install with: pip install dp-accounting"
+        )
+    if epsilon <= 0 or delta <= 0:
+        raise ValueError(f"epsilon ({epsilon}) and delta ({delta}) must be positive")
+
+    lo, hi = 1e-6, 1e6
+    for _ in range(100):  # converges well within 100 bisection steps
+        mid = (lo + hi) / 2.0
+        pld = from_gaussian_mechanism(standard_deviation=mid / sensitivity)
+        if pld.get_epsilon_for_delta(delta) > epsilon:
+            lo = mid  # need more noise
+        else:
+            hi = mid
+    return (lo + hi) / 2.0
+
 
 @dataclass
 class DPConfig:

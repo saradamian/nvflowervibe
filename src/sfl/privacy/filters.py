@@ -55,18 +55,26 @@ class PercentilePrivacyConfig:
         percentile: Only abs diffs above this percentile are kept (0–100).
         gamma: Upper limit to clip abs values of weight diffs.
         noise_scale: Gaussian noise std as a multiple of gamma.
-            0 = no noise (legacy, NOT private). >0 adds calibrated
-            noise after clipping for actual privacy.
+            0 = no noise (legacy, NOT private). >0 adds noise
+            after clipping. Overridden by epsilon if set.
+        epsilon: If set, auto-calibrate noise to this (ε,δ)-DP
+            guarantee via the analytic Gaussian mechanism
+            (Balle & Wang 2018). Overrides noise_scale.
+        delta: Target δ for (ε,δ)-DP (used with epsilon).
     """
     percentile: int = 10
     gamma: float = 0.01
     noise_scale: float = 0.0
+    epsilon: float = 0.0
+    delta: float = 1e-5
 
 
 def make_percentile_privacy_mod(
     percentile: int = 10,
     gamma: float = 0.01,
     noise_scale: float = 0.0,
+    epsilon: float = 0.0,
+    delta: float = 1e-5,
 ) -> Callable[[Message, Context, ClientAppCallable], Message]:
     """Create a Flower client mod that applies percentile privacy.
 
@@ -74,18 +82,30 @@ def make_percentile_privacy_mod(
     are shared; smaller diffs are zeroed. Remaining values are clipped
     to [-gamma, gamma].
 
-    With ``noise_scale > 0``, Gaussian noise (std = noise_scale * gamma)
-    is added after clipping, providing actual privacy. Without noise,
-    this is a bandwidth optimization only — NOT a privacy mechanism.
-
-    Algorithm (Shokri & Shmatikov, CCS '15):
-    1. Flatten all parameter diffs into a single vector
-    2. Compute the ``percentile``-th percentile of |diffs|
-    3. Zero out all diffs below the cutoff
-    4. Clip remaining diffs to [-gamma, gamma]
-    5. (Optional) Add Gaussian noise, re-clip
+    When ``epsilon > 0``, noise is auto-calibrated to the target
+    (ε,δ)-DP guarantee via the Gaussian mechanism. When only
+    ``noise_scale > 0`` is provided, uncalibrated noise is added
+    with a warning. With neither, this is bandwidth reduction only.
     """
-    cfg = PercentilePrivacyConfig(percentile=percentile, gamma=gamma, noise_scale=noise_scale)
+    cfg = PercentilePrivacyConfig(
+        percentile=percentile, gamma=gamma,
+        noise_scale=noise_scale, epsilon=epsilon, delta=delta,
+    )
+
+    # Auto-calibrate noise from (epsilon, delta) if provided
+    if cfg.epsilon > 0:
+        from sfl.privacy.dp import calibrate_gaussian_sigma
+        sigma = calibrate_gaussian_sigma(cfg.epsilon, cfg.delta, cfg.gamma)
+        cfg.noise_scale = sigma / cfg.gamma
+        log(INFO,
+            "PercentilePrivacy: calibrated σ=%.4f for (ε=%.2f, δ=%.1e), "
+            "noise_scale=%.4f",
+            sigma, cfg.epsilon, cfg.delta, cfg.noise_scale)
+    elif cfg.noise_scale > 0:
+        log(WARNING,
+            "PercentilePrivacy: noise_scale=%.4f is uncalibrated (no formal "
+            "(ε,δ) guarantee). Use --percentile-epsilon for calibrated noise.",
+            cfg.noise_scale)
 
     def percentile_privacy_mod(
         msg: Message, ctxt: Context, call_next: ClientAppCallable,
