@@ -386,24 +386,42 @@ class GradientCompressionConfig:
         compression_ratio: Fraction of gradient values to keep (0–1).
         noise_scale: Gaussian noise std relative to the L2 norm
             of surviving values, divided by sqrt(K).
+            Ignored when ``epsilon`` is set.
         use_random_mask: Use magnitude-weighted random masking
             instead of deterministic TopK.
+        epsilon: Target ε for (ε,δ)-DP calibrated noise.
+            When set, ``delta`` and ``clipping_norm`` are required,
+            and noise is computed via PLD calibration instead of
+            the heuristic ``noise_scale``.
+        delta: Target δ for (ε,δ)-DP. Required when ``epsilon``
+            is set.
+        clipping_norm: L2 sensitivity bound. Required when
+            ``epsilon`` is set.
     """
     compression_ratio: float = 0.1
     noise_scale: float = 0.01
     use_random_mask: bool = True
+    epsilon: Optional[float] = None
+    delta: Optional[float] = None
+    clipping_norm: Optional[float] = None
 
 
 def make_gradient_compression_mod(
     compression_ratio: float = 0.1,
     noise_scale: float = 0.01,
     use_random_mask: bool = True,
+    epsilon: Optional[float] = None,
+    delta: Optional[float] = None,
+    clipping_norm: Optional[float] = None,
 ) -> Callable[[Message, Context, ClientAppCallable], Message]:
     """Create a Flower client mod that compresses gradient updates.
 
     Keeps only ``compression_ratio`` fraction of gradient values (TopK or
-    random masking), zeros the rest, and optionally adds noise to
-    surviving values.
+    random masking), zeros the rest, and adds noise to surviving values.
+
+    When ``epsilon`` is set, noise is calibrated via PLD (Balle & Wang
+    2018) to satisfy (ε,δ)-DP with sensitivity = ``clipping_norm``.
+    Otherwise falls back to the heuristic ``noise_scale``.
 
     Random masking (default) selects values with probability proportional
     to magnitude, preventing deterministic TopK from leaking which
@@ -413,7 +431,29 @@ def make_gradient_compression_mod(
         compression_ratio=compression_ratio,
         noise_scale=noise_scale,
         use_random_mask=use_random_mask,
+        epsilon=epsilon,
+        delta=delta,
+        clipping_norm=clipping_norm,
     )
+
+    # Calibrate noise if (ε,δ) are provided
+    if cfg.epsilon is not None:
+        if cfg.delta is None or cfg.clipping_norm is None:
+            raise ValueError(
+                "delta and clipping_norm are required when epsilon is set"
+            )
+        from sfl.privacy.dp import calibrate_gaussian_sigma
+        sigma = calibrate_gaussian_sigma(
+            epsilon=cfg.epsilon,
+            delta=cfg.delta,
+            sensitivity=cfg.clipping_norm,
+        )
+        cfg._calibrated_sigma = sigma
+        log(INFO,
+            "GradientCompression: calibrated σ=%.4f for ε=%.2f, δ=%.1e, "
+            "C=%.2f", sigma, cfg.epsilon, cfg.delta, cfg.clipping_norm)
+    else:
+        cfg._calibrated_sigma = None
 
     def gradient_compression_mod(
         msg: Message, ctxt: Context, call_next: ClientAppCallable,
@@ -450,10 +490,16 @@ def make_gradient_compression_mod(
         out[selected] = flat[selected]
 
         # Add noise to surviving values
-        if cfg.noise_scale > 0 and k > 0:
-            l2 = np.linalg.norm(out[selected])
-            sigma = cfg.noise_scale * l2 / np.sqrt(k)
-            out[selected] += np.random.normal(scale=sigma, size=k)
+        if k > 0:
+            if cfg._calibrated_sigma is not None:
+                # Calibrated (ε,δ)-DP noise
+                out[selected] += np.random.normal(
+                    scale=cfg._calibrated_sigma, size=k,
+                )
+            elif cfg.noise_scale > 0:
+                l2 = np.linalg.norm(out[selected])
+                sigma = cfg.noise_scale * l2 / np.sqrt(k)
+                out[selected] += np.random.normal(scale=sigma, size=k)
 
         log(INFO,
             "gradient_compression: kept %d/%d values (%.1f%%), random=%s",
