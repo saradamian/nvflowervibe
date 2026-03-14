@@ -15,7 +15,7 @@ from flwr.common import (
 )
 from flwr.server.client_proxy import ClientProxy
 
-from sfl.server.robust import MultiKrumFedAvg, TrimmedMeanFedAvg
+from sfl.server.robust import MultiKrumFedAvg, TrimmedMeanFedAvg, SpectralFilterFedAvg
 
 
 def _make_result(values, num_examples=1):
@@ -160,3 +160,71 @@ class TestTrimmedMeanFedAvg:
         np.testing.assert_allclose(
             aggregated[0], [[1, 2], [3, 4]], atol=0.01,
         )
+
+
+# ── Spectral Filter (S1) ───────────────────────────────────────────────────
+
+class TestSpectralFilterFedAvg:
+    """Tests for SpectralFilterFedAvg (S1)."""
+
+    def test_excludes_outlier(self):
+        """Spectral filter should remove a client with a dramatically different update."""
+        honest = [[1.0, 1.0, 1.0, 1.0, 1.0]] * 5
+        adversary = [[100.0, 100.0, 100.0, 100.0, 100.0]]
+        results = [_make_result([v]) for v in honest + adversary]
+
+        strategy = SpectralFilterFedAvg(
+            threshold_sigma=1.5,
+            min_fit_clients=1,
+            min_available_clients=1,
+        )
+        params, _ = strategy.aggregate_fit(1, results, [])
+        assert params is not None
+        aggregated = parameters_to_ndarrays(params)
+        np.testing.assert_allclose(aggregated[0], [1.0] * 5, atol=0.5)
+
+    def test_keeps_all_when_honest(self):
+        """When all clients are similar, none should be removed."""
+        values = [[1.0, 2.0, 3.0]] * 6
+        results = [_make_result([v]) for v in values]
+
+        strategy = SpectralFilterFedAvg(
+            threshold_sigma=2.0,
+            min_fit_clients=1,
+            min_available_clients=1,
+        )
+        params, _ = strategy.aggregate_fit(1, results, [])
+        assert params is not None
+        aggregated = parameters_to_ndarrays(params)
+        np.testing.assert_allclose(aggregated[0], [1.0, 2.0, 3.0], atol=0.01)
+
+    def test_fallback_on_small_n(self):
+        """With < 3 clients, falls back to FedAvg."""
+        results = [_make_result([[2.0]]), _make_result([[4.0]])]
+        strategy = SpectralFilterFedAvg(
+            threshold_sigma=2.0,
+            min_fit_clients=1,
+            min_available_clients=1,
+        )
+        params, _ = strategy.aggregate_fit(1, results, [])
+        aggregated = parameters_to_ndarrays(params)
+        np.testing.assert_allclose(aggregated[0], [3.0], atol=0.1)
+
+    def test_jl_projection_applied(self):
+        """When d > project_dim, JL projection should be applied without error."""
+        d = 2000
+        honest = [np.ones(d, dtype=np.float32)] * 5
+        adversary = [np.ones(d, dtype=np.float32) * 50.0]
+        results = [_make_result([v]) for v in honest + adversary]
+
+        strategy = SpectralFilterFedAvg(
+            threshold_sigma=1.5,
+            project_dim=100,  # force projection
+            min_fit_clients=1,
+            min_available_clients=1,
+        )
+        params, _ = strategy.aggregate_fit(1, results, [])
+        assert params is not None
+        aggregated = parameters_to_ndarrays(params)
+        # Should be near 1.0, not pulled toward 50
+        np.testing.assert_allclose(aggregated[0][:5], [1.0] * 5, atol=1.0)
