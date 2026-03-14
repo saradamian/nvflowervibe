@@ -80,6 +80,18 @@ def parse_args() -> argparse.Namespace:
         choices=["server", "client"],
         help="DP mode: server-side or client-side (default: server)",
     )
+    parser.add_argument(
+        "--dp-delta",
+        type=float,
+        default=1e-5,
+        help="DP target delta for privacy accounting (default: 1e-5)",
+    )
+    parser.add_argument(
+        "--dp-max-epsilon",
+        type=float,
+        default=10.0,
+        help="DP budget cap — stop training when epsilon exceeds this (default: 10.0)",
+    )
 
     # Privacy filters
     parser.add_argument(
@@ -199,6 +211,8 @@ def main() -> int:
         os.environ["SFL_DP_NOISE"] = str(args.dp_noise)
         os.environ["SFL_DP_CLIP"] = str(args.dp_clip)
         os.environ["SFL_DP_MODE"] = args.dp_mode
+        os.environ["SFL_DP_DELTA"] = str(args.dp_delta)
+        os.environ["SFL_DP_MAX_EPSILON"] = str(args.dp_max_epsilon)
 
     server_app = ServerApp(server_fn=server_fn)
     

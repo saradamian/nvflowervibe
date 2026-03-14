@@ -40,6 +40,9 @@ esm2 = [
 he = [
     "tenseal>=0.3.14",
 ]
+privacy = [
+    "dp-accounting>=0.4.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
