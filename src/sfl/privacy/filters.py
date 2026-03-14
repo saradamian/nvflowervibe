@@ -438,7 +438,23 @@ def make_gradient_compression_mod(
     Random masking (default) selects values with probability proportional
     to magnitude, preventing deterministic TopK from leaking which
     parameters are consistently large.
+
+    **Important**: When ``epsilon`` is set, ``use_random_mask`` is forced
+    to ``False`` because data-dependent masking is an adaptive mechanism
+    whose DP cost is not accounted for in the noise calibration. Only
+    deterministic TopK gives a data-independent mask compatible with the
+    calibrated (ε,δ)-DP guarantee.
     """
+    # Force deterministic TopK in DP mode — data-dependent random masking
+    # is an adaptive mechanism whose privacy cost is not composed into
+    # the calibrated noise. Using it would invalidate the ε claim.
+    if epsilon is not None and use_random_mask:
+        log(WARNING,
+            "GradientCompression: forcing use_random_mask=False because "
+            "epsilon is set. Data-dependent masking would invalidate the "
+            "(ε,δ)-DP guarantee.")
+        use_random_mask = False
+
     cfg = GradientCompressionConfig(
         compression_ratio=compression_ratio,
         noise_scale=noise_scale,

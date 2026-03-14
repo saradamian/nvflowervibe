@@ -45,6 +45,28 @@ class SecAggConfig:
     clipping_range: float = 8.0
     quantization_range: int = 4194304
 
+    def __post_init__(self):
+        import math
+        min_threshold = math.ceil(2 * self.num_shares / 3)
+        if self.reconstruction_threshold < min_threshold:
+            from sfl.utils.logging import get_logger
+            get_logger(__name__).warning(
+                "SecAgg+ reconstruction_threshold=%d is below the "
+                "recommended minimum ceil(2*num_shares/3)=%d. With a "
+                "low threshold, fewer colluding nodes can reconstruct "
+                "individual updates. Consider threshold >= %d.",
+                self.reconstruction_threshold, min_threshold, min_threshold,
+            )
+        if self.reconstruction_threshold > self.num_shares:
+            raise ValueError(
+                f"reconstruction_threshold ({self.reconstruction_threshold}) "
+                f"must be <= num_shares ({self.num_shares})"
+            )
+        if self.num_shares < 2:
+            raise ValueError(
+                f"num_shares ({self.num_shares}) must be >= 2"
+            )
+
 
 def build_secagg_config(cfg: SecAggConfig) -> dict:
     """Build kwargs for SecAggPlusWorkflow from config.

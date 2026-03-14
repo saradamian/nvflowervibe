@@ -27,6 +27,13 @@ from sfl.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Threshold above which random projection is used for Krum distances.
+# For ESM2 (8M params), computing O(n²·d) pairwise distances is
+# prohibitively slow. Johnson–Lindenstrauss projection to k dimensions
+# preserves distances within (1±ε) with high probability.
+_KRUM_DIM_THRESHOLD = 50_000
+_KRUM_PROJECT_DIM = 1000
+
 
 class MultiKrumFedAvg(FedAvg):
     """FedAvg with Multi-Krum selection to exclude outlier updates.
@@ -83,13 +90,30 @@ class MultiKrumFedAvg(FedAvg):
             )
             updates.append(flat)
 
-        # Pairwise L2 distances
-        dists = np.zeros((n, n))
-        for i in range(n):
-            for j in range(i + 1, n):
-                d = float(np.linalg.norm(updates[i] - updates[j]))
-                dists[i, j] = d
-                dists[j, i] = d
+        d = updates[0].shape[0]
+
+        # Random projection for high-dimensional updates (JL lemma).
+        # Projects to _KRUM_PROJECT_DIM dimensions, preserving pairwise
+        # distances within (1±ε) with high probability.
+        if d > _KRUM_DIM_THRESHOLD:
+            rng = np.random.RandomState(42)  # deterministic for reproducibility
+            proj = rng.normal(
+                scale=1.0 / np.sqrt(_KRUM_PROJECT_DIM),
+                size=(d, _KRUM_PROJECT_DIM),
+            ).astype(np.float32)
+            updates = [u.astype(np.float32) @ proj for u in updates]
+            logger.info(
+                "[multi-krum] projected %d dims -> %d dims (JL)",
+                d, _KRUM_PROJECT_DIM,
+            )
+
+        # Pairwise L2 distances (vectorized)
+        stacked = np.stack(updates)  # (n, d')
+        # ||u_i - u_j||² = ||u_i||² + ||u_j||² - 2·u_i·u_j
+        norms_sq = np.sum(stacked ** 2, axis=1)  # (n,)
+        gram = stacked @ stacked.T  # (n, n)
+        dist_sq = np.maximum(0.0, norms_sq[:, None] + norms_sq[None, :] - 2 * gram)
+        dists = np.sqrt(dist_sq)
 
         # Krum score: sum of distances to (n - f - 2) nearest neighbors
         k_nearest = n - f - 2

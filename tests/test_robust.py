@@ -53,6 +53,25 @@ class TestMultiKrumFedAvg:
         # Result should be near [1,1,1], not pulled toward 100
         np.testing.assert_allclose(aggregated[0], [1.0, 1.0, 1.0], atol=0.01)
 
+    def test_excludes_outlier_high_dim(self):
+        """Krum with JL projection should still exclude outliers (C3)."""
+        from sfl.server.robust import _KRUM_DIM_THRESHOLD
+        d = _KRUM_DIM_THRESHOLD + 100  # force projection
+        honest = [np.ones(d, dtype=np.float32)] * 4
+        adversary = [np.ones(d, dtype=np.float32) * 100.0]
+        results = [_make_result([v]) for v in honest + adversary]
+
+        strategy = MultiKrumFedAvg(
+            num_byzantine=1,
+            min_fit_clients=1,
+            min_available_clients=1,
+        )
+        params, _ = strategy.aggregate_fit(1, results, [])
+        assert params is not None
+        aggregated = parameters_to_ndarrays(params)
+        # Should still be near 1.0, not pulled toward 100
+        np.testing.assert_allclose(aggregated[0][:5], [1.0] * 5, atol=0.01)
+
     def test_fallback_on_small_n(self):
         """With too few clients, falls back to FedAvg."""
         results = [_make_result([[2.0]]), _make_result([[4.0]])]

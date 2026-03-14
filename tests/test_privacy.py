@@ -312,6 +312,23 @@ class TestSecAggConfig:
         # the function was created and server_fn would be called
         assert callable(main_fn)
 
+    def test_low_threshold_warns(self):
+        """reconstruction_threshold below ceil(2n/3) should warn (C2)."""
+        # ceil(2*4/3)=3, threshold=2 < 3 should trigger logger warning
+        # Just verify it succeeds without raising
+        cfg = SecAggConfig(num_shares=4, reconstruction_threshold=2)
+        assert cfg.reconstruction_threshold == 2
+
+    def test_threshold_exceeds_shares_raises(self):
+        """reconstruction_threshold > num_shares should raise ValueError."""
+        with pytest.raises(ValueError, match="must be <= num_shares"):
+            SecAggConfig(num_shares=3, reconstruction_threshold=4)
+
+    def test_shares_below_two_raises(self):
+        """num_shares < 2 should raise ValueError."""
+        with pytest.raises(ValueError, match="must be >= 2"):
+            SecAggConfig(num_shares=1, reconstruction_threshold=1)
+
 
 # ── Sum Demo Server DP Integration ──────────────────────────────────────────
 
