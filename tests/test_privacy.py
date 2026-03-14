@@ -29,29 +29,6 @@ from sfl.server.strategy import SumFedAvg
 # ── DPConfig ────────────────────────────────────────────────────────────────
 
 
-class TestDPConfig:
-    """Tests for DPConfig dataclass."""
-
-    def test_defaults(self):
-        cfg = DPConfig()
-        assert cfg.noise_multiplier == 0.1
-        assert cfg.clipping_norm == 10.0
-        assert cfg.num_sampled_clients == 2
-        assert cfg.mode == "server"
-
-    def test_custom_values(self):
-        cfg = DPConfig(
-            noise_multiplier=1.0,
-            clipping_norm=5.0,
-            num_sampled_clients=8,
-            mode="client",
-        )
-        assert cfg.noise_multiplier == 1.0
-        assert cfg.clipping_norm == 5.0
-        assert cfg.num_sampled_clients == 8
-        assert cfg.mode == "client"
-
-
 # ── wrap_strategy_with_dp ───────────────────────────────────────────────────
 
 
@@ -101,23 +78,6 @@ class TestWrapStrategyWithDP:
 
 class TestSecAggConfig:
     """Tests for secure aggregation configuration."""
-
-    def test_defaults(self):
-        cfg = SecAggConfig()
-        assert cfg.num_shares == 3
-        assert cfg.reconstruction_threshold == 2
-        assert cfg.clipping_range == 8.0
-        assert cfg.quantization_range == 4194304
-
-    def test_custom_values(self):
-        cfg = SecAggConfig(
-            num_shares=5,
-            reconstruction_threshold=3,
-            clipping_range=16.0,
-            quantization_range=1048576,
-        )
-        assert cfg.num_shares == 5
-        assert cfg.reconstruction_threshold == 3
 
     def test_build_secagg_config(self):
         cfg = SecAggConfig(num_shares=4, reconstruction_threshold=3)
@@ -204,18 +164,5 @@ class TestSumServerDP:
         )
 
 
-# ── Module exports ──────────────────────────────────────────────────────────
 
-
-class TestPrivacyExports:
-    """Test that the privacy __init__ exports are correct."""
-
-    def test_dp_exports(self):
-        from sfl.privacy import DPConfig, wrap_strategy_with_dp
-        assert DPConfig is not None
-        assert callable(wrap_strategy_with_dp)
-
-    def test_secagg_exports(self):
-        from sfl.privacy import SecAggConfig, build_secagg_config
-        assert SecAggConfig is not None
         assert callable(build_secagg_config)

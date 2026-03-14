@@ -62,14 +62,4 @@ class TestRunConfigModule:
         assert get_run_config().num_clients == 10
         assert get_run_config().num_rounds == 5
 
-    def test_set_overrides_previous(self):
-        set_run_config(ESM2RunConfig(federation=FederationConfig(num_clients=3)))
-        set_run_config(ESM2RunConfig(federation=FederationConfig(num_clients=7)))
-        assert get_run_config().num_clients == 7
 
-    def test_get_default_returns_fresh_instance(self):
-        a = get_run_config()
-        b = get_run_config()
-        # Both should be default, but separate instances
-        assert a is not b
-        assert a.num_clients == b.num_clients

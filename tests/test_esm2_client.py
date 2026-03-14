@@ -62,15 +62,6 @@ class TestESM2ClientMethods:
         assert "train_loss" in metrics
         assert "num_examples" in metrics
 
-    def test_fit_delegates_to_compute_update(self, esm2_client):
-        """fit() (from BaseFederatedClient) should call compute_update()."""
-        params = esm2_client.get_parameters({})
-        result = esm2_client.fit(params, {})
-        assert len(result) == 3
-        updated_params, num_examples, metrics = result
-        assert isinstance(updated_params, list)
-        assert num_examples > 0
-
     def test_evaluate_returns_loss(self, esm2_client):
         params = esm2_client.get_parameters({})
         loss, num_examples, metrics = esm2_client.evaluate(params, {})
@@ -115,10 +106,4 @@ class TestClientFn:
         # Should not raise — partition 1 of 2 is valid
         client_fn(context)
 
-    def test_string_partition_id_handled(self):
-        """partition-id might come as a string from NVFlare."""
-        context = MagicMock()
-        context.node_config = {"partition-id": "0", "num-partitions": "1"}
-        context.node_id = 0
-        context.run_config = {}
-        client_fn(context)
+

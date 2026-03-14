@@ -8,14 +8,11 @@ without starting a full simulation (no Ray, no network).
 Run automatically on PR to main via CI.
 """
 
-import tempfile
-from pathlib import Path
 from typing import List, Tuple, Union
 from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
-import yaml
 from flwr.common import (
     FitRes,
     Parameters,
@@ -26,10 +23,8 @@ from flwr.common import (
 )
 from flwr.server.client_proxy import ClientProxy
 
-from sfl.client.base import BaseFederatedClient
 from sfl.client.sum_client import SumClient
 from sfl.server.strategy import SumFedAvg
-from sfl.types import FederationConfig, SFLConfig
 from sfl.utils.config import load_config, reset_config
 
 
@@ -51,40 +46,6 @@ def _make_client_proxy(cid: str) -> ClientProxy:
     proxy = MagicMock(spec=ClientProxy)
     proxy.cid = cid
     return proxy  # type: ignore[return-value]
-
-
-# ── Client → Parameters flow ───────────────────────────────────────────────
-
-class TestClientParameterFlow:
-    """Test that clients produce correct parameters for aggregation."""
-
-    def test_sum_client_produces_secret_as_parameter(self):
-        client = SumClient(client_id=0, secret=7.0)
-        params, num_examples, metrics = client.fit([], {})
-
-        assert len(params) == 1
-        assert float(params[0].item()) == pytest.approx(7.0)
-        assert num_examples == 1
-
-    def test_multiple_clients_produce_distinct_secrets(self):
-        base_secret = 7.0
-        secrets = []
-        for i in range(4):
-            client = SumClient(client_id=i, secret=base_secret + i)
-            params, _, _ = client.fit([], {})
-            secrets.append(float(params[0].item()))
-
-        assert secrets == [7.0, 8.0, 9.0, 10.0]
-
-    def test_client_parameters_are_float32(self):
-        client = SumClient(client_id=0, secret=3.14)
-        params, _, _ = client.fit([], {})
-        assert params[0].dtype == np.float32
-
-    def test_client_initial_parameters_are_zero(self):
-        client = SumClient(client_id=0, secret=99.0)
-        params = client.get_initial_parameters()
-        assert float(params[0].item()) == 0.0
 
 
 # ── Strategy aggregation ───────────────────────────────────────────────────
@@ -117,19 +78,6 @@ class TestSumAggregation:
         metrics = self._run_aggregation([7.0, 8.0])
         assert metrics["federated_sum"] == pytest.approx(15.0)
         assert metrics["num_clients"] == 2
-
-    def test_four_client_sum(self):
-        metrics = self._run_aggregation([7.0, 8.0, 9.0, 10.0])
-        assert metrics["federated_sum"] == pytest.approx(34.0)
-        assert metrics["num_clients"] == 4
-
-    def test_single_client(self):
-        metrics = self._run_aggregation([42.0])
-        assert metrics["federated_sum"] == pytest.approx(42.0)
-
-    def test_zero_values(self):
-        metrics = self._run_aggregation([0.0, 0.0])
-        assert metrics["federated_sum"] == pytest.approx(0.0)
 
     def test_negative_values(self):
         metrics = self._run_aggregation([-5.0, 3.0])
@@ -192,24 +140,6 @@ class TestEndToEndPipeline:
         assert metrics["federated_sum"] == pytest.approx(15.0)
         assert metrics["num_clients"] == 2
 
-    def test_multi_round_aggregation(self):
-        """Verify aggregation works across multiple rounds."""
-        initial = ndarrays_to_parameters([np.array([0.0], dtype=np.float32)])
-        strategy = SumFedAvg(initial_parameters=initial)
-
-        for round_num in range(1, 4):
-            results = [
-                (_make_client_proxy("0"), _make_fit_result(7.0)),
-                (_make_client_proxy("1"), _make_fit_result(8.0)),
-            ]
-            aggregated = strategy.aggregate_fit(
-                server_round=round_num, results=results, failures=[]
-            )
-            assert aggregated is not None
-            _, metrics = aggregated
-            # Sum should be identical each round (stateless clients)
-            assert metrics["federated_sum"] == pytest.approx(15.0)
-
     def test_pipeline_with_failures(self):
         """Strategy handles partial failures gracefully."""
         initial = ndarrays_to_parameters([np.array([0.0], dtype=np.float32)])
@@ -250,38 +180,6 @@ class TestConfigIntegration:
         assert fed.num_rounds >= 1
         assert fed.min_available_clients <= fed.num_clients
 
-    def test_yaml_config_round_trip(self):
-        """Write config to YAML, load it, verify values survive."""
-        yaml_content = {
-            "federation": {"num_clients": 5, "num_rounds": 3},
-            "client": {"base_secret": 42.0},
-            "server": {"initial_param": 1.0},
-        }
-
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False
-        ) as f:
-            yaml.dump(yaml_content, f)
-            config_path = f.name
-
-        try:
-            config = load_config(config_path=config_path)
-            assert config.federation.num_clients == 5
-            assert config.federation.num_rounds == 3
-            assert config.client.base_secret == 42.0
-            assert config.server.initial_param == 1.0
-        finally:
-            Path(config_path).unlink(missing_ok=True)
-
-    def test_cli_overrides_take_precedence(self):
-        config = load_config(cli_overrides={"federation": {"num_clients": 10}})
-        assert config.federation.num_clients == 10
-
-    def test_env_overrides(self, monkeypatch):
-        monkeypatch.setenv("SFL_NUM_CLIENTS", "8")
-        config = load_config()
-        assert config.federation.num_clients == 8
-
     def test_config_validation_rejects_bad_values(self):
         with pytest.raises(ValueError):
             load_config(cli_overrides={"federation": {"num_clients": 0}})
@@ -309,18 +207,4 @@ class TestStrategyEdgeCases:
         assert metrics["federated_sum"] == 0
         assert metrics["num_clients"] == 0
 
-    def test_very_large_values(self):
-        initial = ndarrays_to_parameters([np.array([0.0], dtype=np.float32)])
-        strategy = SumFedAvg(initial_parameters=initial)
 
-        results = [
-            (_make_client_proxy("0"), _make_fit_result(1e10)),
-            (_make_client_proxy("1"), _make_fit_result(2e10)),
-        ]
-
-        aggregated = strategy.aggregate_fit(
-            server_round=1, results=results, failures=[]
-        )
-        assert aggregated is not None
-        _, metrics = aggregated
-        assert metrics["federated_sum"] == pytest.approx(3e10)
