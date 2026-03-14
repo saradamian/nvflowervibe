@@ -184,6 +184,9 @@ Examples:
     parser.add_argument("--dpsgd-autoclip", action="store_true",
                         help="Enable AutoClip (Li et al. 2023): normalize per-example "
                              "gradients to unit norm, eliminating clipping norm tuning")
+    parser.add_argument("--dpsgd-ghost", action="store_true",
+                        help="Enable Ghost Clipping: memory-efficient two-pass DP-SGD "
+                             "(reduces memory from O(B*P) to O(B+P))")
 
     return parser.parse_args()
 
@@ -317,6 +320,8 @@ def run_flower(args: argparse.Namespace, logger) -> int:
         os.environ["SFL_DPSGD_DELTA"] = str(args.dpsgd_delta)
         if args.dpsgd_autoclip:
             os.environ["SFL_DPSGD_AUTOCLIP"] = "true"
+        if args.dpsgd_ghost:
+            os.environ["SFL_DPSGD_GHOST"] = "true"
 
     if args.secagg:
         from flwr.client.mod import secaggplus_mod

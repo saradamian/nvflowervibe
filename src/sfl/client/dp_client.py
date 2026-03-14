@@ -34,11 +34,17 @@ class DPSGDConfig:
             before noise addition, making the clipping norm
             hyperparameter unnecessary. Overrides ``max_grad_norm``
             to 1.0 internally.
+        ghost_clipping: Enable Ghost Clipping (Li et al., 2022;
+            Opacus ``grad_sample_mode="ghost"``). Uses two backward
+            passes instead of materializing per-sample gradients,
+            reducing memory from O(B×P) to O(B+P). Incompatible
+            with ``auto_clip=True``.
     """
     max_grad_norm: float = 1.0
     noise_multiplier: float = 1.0
     target_delta: float = 1e-5
     auto_clip: bool = False
+    ghost_clipping: bool = False
 
 
 def enable_dpsgd(client, config: DPSGDConfig):
@@ -99,13 +105,53 @@ def enable_dpsgd(client, config: DPSGDConfig):
                     autoclip_hooks.append(h)
 
         privacy_engine = PrivacyEngine()
-        dp_model, dp_optimizer, dp_loader = privacy_engine.make_private(
+
+        # Ghost clipping uses two backward passes and returns a
+        # criterion wrapper as the 3rd element. It requires an external
+        # criterion (not model-internal loss), so we pass CrossEntropyLoss
+        # and restructure the loop to use (logits, labels).
+        import torch.nn as nn
+
+        ghost_mode = config.ghost_clipping
+        grad_mode = "ghost" if ghost_mode else "hooks"
+        make_private_kwargs = dict(
             module=self.model,
             optimizer=optimizer,
             data_loader=loader,
             noise_multiplier=config.noise_multiplier,
             max_grad_norm=effective_clip,
+            grad_sample_mode=grad_mode,
+            loss_reduction="mean",
         )
+
+        if ghost_mode:
+            # Ghost clipping needs an explicit criterion that takes
+            # (logits, labels) and returns a scalar loss. We use a
+            # wrapper that handles the sequence-model reshape
+            # (B, S, V) → (B*S, V) before CrossEntropyLoss.
+            class _SeqCELoss(nn.Module):
+                """CrossEntropyLoss that flattens sequence dims."""
+                reduction = "mean"  # Opacus checks this attribute
+
+                def __init__(self_):
+                    super().__init__()
+                    self_.ce = nn.CrossEntropyLoss(reduction="mean")
+
+                def forward(self_, logits, labels):
+                    return self_.ce(
+                        logits.reshape(-1, logits.size(-1)),
+                        labels.reshape(-1),
+                    )
+
+            make_private_kwargs["criterion"] = _SeqCELoss()
+            dp_model, dp_optimizer, dp_criterion, dp_loader = (
+                privacy_engine.make_private(**make_private_kwargs)
+            )
+        else:
+            dp_model, dp_optimizer, dp_loader = (
+                privacy_engine.make_private(**make_private_kwargs)
+            )
+            dp_criterion = None
 
         total_loss = 0.0
         total_batches = 0
@@ -114,9 +160,21 @@ def enable_dpsgd(client, config: DPSGDConfig):
             for batch in dp_loader:
                 batch = {k: v.to(self.device) for k, v in batch.items()}
                 dp_optimizer.zero_grad()
-                outputs = dp_model(**batch)
-                loss = outputs.loss
-                loss.backward()
+
+                if dp_criterion is not None:
+                    # Ghost clipping: compute logits, then use dp_criterion
+                    # which handles the two-pass clipping internally
+                    outputs = dp_model(**{k: v for k, v in batch.items() if k != "labels"})
+                    logits = outputs.logits
+                    labels = batch["labels"]
+                    # Flatten for cross-entropy: (B*seq_len, vocab) vs (B*seq_len,)
+                    loss = dp_criterion(logits.view(-1, logits.size(-1)), labels.view(-1))
+                    loss.backward()
+                else:
+                    outputs = dp_model(**batch)
+                    loss = outputs.loss
+                    loss.backward()
+
                 dp_optimizer.step()
                 total_loss += loss.item()
                 total_batches += 1
@@ -152,6 +210,8 @@ def enable_dpsgd(client, config: DPSGDConfig):
             pass  # dp-accounting not installed, use Opacus RDP
 
         clip_info = "AutoClip" if config.auto_clip else f"C={effective_clip:.2f}"
+        if config.ghost_clipping:
+            clip_info += "+Ghost"
         logger.info(
             "Client %d: DP-SGD ε=%.4f (δ=%g, σ=%.2f, %s)",
             self.client_id, self._dpsgd_epsilon,
