@@ -203,9 +203,29 @@ python jobs/esm2_runner.py --dpsgd --dpsgd-noise 1.0 --dpsgd-clip 1.0
 | `--dpsgd-clip` | 1.0 | Max per-sample gradient L2 norm |
 | `--dpsgd-noise` | 1.0 | Noise multiplier for DP-SGD |
 | `--dpsgd-delta` | 1e-5 | Target δ for DP-SGD |
+| `--dpsgd-autoclip` | off | Enable AutoClip (Li et al., NeurIPS 2023) |
 
 Each client reports `dpsgd_epsilon` in its fit metrics, which is
 automatically composed with server-side ε by the `_AccountingWrapper`.
+
+#### AutoClip (Automatic Clipping)
+
+Standard DP-SGD requires a clipping norm hyperparameter `C` that
+trades off bias (too small) vs. noise magnitude (too large). AutoClip
+(Li et al., NeurIPS 2023) eliminates this tradeoff by normalizing
+each per-example gradient to unit L2 norm before noise addition.
+
+With AutoClip enabled:
+
+- Each gradient is scaled to ‖g‖ = 1 via a backward hook
+- Opacus clips at C = 1, which is a no-op on unit-norm gradients
+- Noise scale becomes σ · 1 = σ, independent of gradient magnitude
+- The `--dpsgd-clip` flag is ignored
+
+```bash
+# AutoClip: no need to tune --dpsgd-clip
+python jobs/esm2_runner.py --dpsgd --dpsgd-noise 1.0 --dpsgd-autoclip
+```
 
 **Requires**: `pip install opacus>=1.5`
 

@@ -324,6 +324,7 @@ def client_fn(context: Context) -> Client:
             max_grad_norm=float(os.environ.get("SFL_DPSGD_CLIP", "1.0")),
             noise_multiplier=float(os.environ.get("SFL_DPSGD_NOISE", "1.0")),
             target_delta=float(os.environ.get("SFL_DPSGD_DELTA", "1e-5")),
+            auto_clip=os.environ.get("SFL_DPSGD_AUTOCLIP", "").lower() == "true",
         )
         enable_dpsgd(client, dpsgd_cfg)
 

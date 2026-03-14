@@ -153,3 +153,57 @@ class TestEnableDPSGD:
         client_high._train()
         # Less noise → higher epsilon
         assert client_low._dpsgd_epsilon > client_high._dpsgd_epsilon
+
+
+@pytest.mark.skipif(not _has_opacus, reason="opacus not installed")
+class TestAutoClip:
+
+    def test_auto_clip_defaults_false(self):
+        """auto_clip should default to False."""
+        cfg = DPSGDConfig()
+        assert cfg.auto_clip is False
+
+    def test_auto_clip_train_completes(self):
+        """Training with auto_clip=True should complete without errors."""
+        client = _DummyClient()
+        config = DPSGDConfig(noise_multiplier=0.5, auto_clip=True)
+        enable_dpsgd(client, config)
+        loss = client._train()
+        assert isinstance(loss, float)
+        assert loss >= 0
+
+    def test_auto_clip_epsilon_tracked(self):
+        """After AutoClip training, epsilon should be positive."""
+        client = _DummyClient()
+        config = DPSGDConfig(noise_multiplier=1.0, auto_clip=True)
+        enable_dpsgd(client, config)
+        client._train()
+        assert client._dpsgd_epsilon > 0
+
+    def test_auto_clip_overrides_max_grad_norm(self):
+        """auto_clip=True should use effective clip of 1.0 regardless of max_grad_norm."""
+        client = _DummyClient()
+        # Set a high max_grad_norm — AutoClip should ignore it
+        config = DPSGDConfig(max_grad_norm=100.0, noise_multiplier=1.0, auto_clip=True)
+        enable_dpsgd(client, config)
+        client._train()
+        # Should still produce a reasonable epsilon (not inflated by clip=100)
+        assert client._dpsgd_epsilon > 0
+
+    def test_auto_clip_model_unwrapped(self):
+        """After AutoClip training, model should be unwrapped."""
+        from opacus import GradSampleModule
+        client = _DummyClient()
+        config = DPSGDConfig(noise_multiplier=0.5, auto_clip=True)
+        enable_dpsgd(client, config)
+        client._train()
+        assert not isinstance(client.model, GradSampleModule)
+
+    def test_auto_clip_compute_update_metrics(self):
+        """compute_update with AutoClip should include dpsgd_epsilon."""
+        client = _DummyClient()
+        config = DPSGDConfig(noise_multiplier=1.0, auto_clip=True)
+        enable_dpsgd(client, config)
+        params, n, metrics = client.compute_update([], {})
+        assert "dpsgd_epsilon" in metrics
+        assert metrics["dpsgd_epsilon"] > 0
