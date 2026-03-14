@@ -73,16 +73,32 @@ def server_fn(context: Context) -> ServerAppComponents:
         [np.array([initial_param], dtype=np.float32)]
     )
     
-    # Create strategy
-    strategy = SumFedAvg(
+    # Create strategy based on aggregation setting
+    import os
+    aggregation = os.environ.get("SFL_AGGREGATION", "fedavg").lower()
+    strategy_kwargs = dict(
         min_fit_clients=min_fit_clients,
         min_available_clients=num_clients,
         initial_parameters=initial_params,
         log_client_values=True,
     )
 
+    if aggregation == "krum":
+        from sfl.server.robust import MultiKrumFedAvg
+        strategy = MultiKrumFedAvg(
+            num_byzantine=int(os.environ.get("SFL_KRUM_BYZANTINE", "1")),
+            **strategy_kwargs,
+        )
+    elif aggregation == "trimmed-mean":
+        from sfl.server.robust import TrimmedMeanFedAvg
+        strategy = TrimmedMeanFedAvg(
+            trim_ratio=float(os.environ.get("SFL_TRIM_RATIO", "0.1")),
+            **strategy_kwargs,
+        )
+    else:
+        strategy = SumFedAvg(**strategy_kwargs)
+
     # Wrap with DP if configured (check run_config or env vars)
-    import os
     dp_enabled = (
         str(run_config.get("dp-enabled", "false")).lower() == "true"
         or os.environ.get("SFL_DP_ENABLED", "").lower() == "true"

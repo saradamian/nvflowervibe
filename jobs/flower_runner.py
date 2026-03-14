@@ -215,6 +215,27 @@ def parse_args() -> argparse.Namespace:
         default=8.0,
         help="SecAgg+ clipping range (default: 8.0)",
     )
+
+    # Aggregation strategy
+    parser.add_argument(
+        "--aggregation",
+        type=str,
+        default="fedavg",
+        choices=["fedavg", "krum", "trimmed-mean"],
+        help="Aggregation strategy (default: fedavg)",
+    )
+    parser.add_argument(
+        "--krum-byzantine",
+        type=int,
+        default=1,
+        help="Expected number of Byzantine clients for Multi-Krum (default: 1)",
+    )
+    parser.add_argument(
+        "--trim-ratio",
+        type=float,
+        default=0.1,
+        help="Fraction to trim per side for trimmed-mean (default: 0.1)",
+    )
     
     return parser.parse_args()
 
@@ -329,6 +350,12 @@ def main() -> int:
             os.environ["SFL_DP_ADAPTIVE_CLIP"] = "true"
             os.environ["SFL_DP_TARGET_QUANTILE"] = str(args.dp_target_quantile)
             os.environ["SFL_DP_CLIP_LR"] = str(args.dp_clip_lr)
+
+    # Pass aggregation config via env vars
+    if args.aggregation != "fedavg":
+        os.environ["SFL_AGGREGATION"] = args.aggregation
+        os.environ["SFL_KRUM_BYZANTINE"] = str(args.krum_byzantine)
+        os.environ["SFL_TRIM_RATIO"] = str(args.trim_ratio)
 
     if args.secagg:
         from sfl.privacy.secagg import SecAggConfig, make_secagg_main
