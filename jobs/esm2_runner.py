@@ -108,6 +108,10 @@ Examples:
                         help="Clipping bound for percentile privacy (default: 0.01)")
     parser.add_argument("--percentile-noise", type=float, default=0.0,
                         help="Gaussian noise scale for percentile privacy (default: 0, no noise)")
+    parser.add_argument("--percentile-epsilon", type=float, default=0.0,
+                        help="Calibrate percentile noise to this ε (overrides --percentile-noise)")
+    parser.add_argument("--percentile-delta", type=float, default=1e-5,
+                        help="δ for percentile noise calibration (default: 1e-5)")
     parser.add_argument("--svt-privacy", action="store_true",
                         help="Enable SVT (Sparse Vector Technique) differential privacy")
     parser.add_argument("--svt-epsilon", type=float, default=0.1,
@@ -204,7 +208,10 @@ def run_flower(args: argparse.Namespace, logger) -> int:
     if args.percentile_privacy is not None:
         from sfl.privacy.filters import make_percentile_privacy_mod
         client_mods.append(
-            make_percentile_privacy_mod(args.percentile_privacy, args.percentile_gamma, args.percentile_noise)
+            make_percentile_privacy_mod(
+                args.percentile_privacy, args.percentile_gamma, args.percentile_noise,
+                epsilon=args.percentile_epsilon, delta=args.percentile_delta,
+            )
         )
     if args.svt_privacy:
         from sfl.privacy.filters import make_svt_privacy_mod

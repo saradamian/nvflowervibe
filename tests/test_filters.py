@@ -174,6 +174,42 @@ class TestPercentilePrivacyMod:
             assert len(warning_calls) >= 1
             assert "NO formal privacy" in str(warning_calls[0])
 
+    def test_epsilon_calibrates_noise(self):
+        """epsilon > 0 should auto-calibrate noise_scale via PLD."""
+        params = [np.array([0.5, -0.5, 0.8, -0.8], dtype=np.float32)]
+        in_msg, out_msg = _make_train_message(params)
+
+        # With epsilon, noise should be added (calibrated)
+        mod = make_percentile_privacy_mod(percentile=0, gamma=1.0, epsilon=1.0, delta=1e-5)
+        call_next = MagicMock(return_value=out_msg)
+
+        np.random.seed(0)
+        result = mod(in_msg, MagicMock(spec=Context), call_next)
+        result_params = _extract_params(result)
+
+        # Output should differ from input (noise was added)
+        assert not np.allclose(result_params[0], [0.5, -0.5, 0.8, -0.8], atol=1e-6)
+
+    def test_epsilon_overrides_noise_scale(self):
+        """When epsilon is set, it should override the explicit noise_scale."""
+        # Two mods: one with manual noise_scale, one with epsilon
+        mod_manual = make_percentile_privacy_mod(percentile=0, gamma=1.0, noise_scale=0.5)
+        mod_eps = make_percentile_privacy_mod(percentile=0, gamma=1.0, noise_scale=0.5, epsilon=1.0, delta=1e-5)
+
+        # The epsilon mod should have recalculated noise_scale
+        # We can't easily inspect the closure, but we can verify the two
+        # produce different outputs with the same seed
+        params = [np.array([0.5, -0.5], dtype=np.float32)]
+        in_msg, out_msg = _make_train_message(params)
+
+        np.random.seed(99)
+        r1 = _extract_params(mod_manual(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg)))
+        np.random.seed(99)
+        r2 = _extract_params(mod_eps(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg)))
+
+        # Different noise_scale → different results
+        assert not np.allclose(r1[0], r2[0])
+
 
 # ── SVTPrivacy Tests ────────────────────────────────────────────────────────
 

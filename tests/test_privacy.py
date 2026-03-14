@@ -73,6 +73,40 @@ class TestWrapStrategyWithDP:
         assert isinstance(wrapped, DifferentialPrivacyServerSideFixedClipping)
 
 
+# ── calibrate_gaussian_sigma ────────────────────────────────────────────────
+
+
+class TestCalibrateGaussianSigma:
+    """Tests for the PLD-based noise calibration."""
+
+    def test_calibrated_sigma_satisfies_epsilon(self):
+        """σ returned by calibration should give ε ≤ target."""
+        from sfl.privacy.dp import calibrate_gaussian_sigma
+        from dp_accounting.pld.privacy_loss_distribution import from_gaussian_mechanism
+
+        sigma = calibrate_gaussian_sigma(epsilon=1.0, delta=1e-5, sensitivity=1.0)
+        pld = from_gaussian_mechanism(standard_deviation=sigma)
+        actual_eps = pld.get_epsilon_for_delta(1e-5)
+        assert actual_eps <= 1.0 + 1e-6
+
+    def test_higher_epsilon_gives_less_noise(self):
+        """Relaxing epsilon should require less noise (lower sigma)."""
+        from sfl.privacy.dp import calibrate_gaussian_sigma
+
+        sigma_tight = calibrate_gaussian_sigma(epsilon=0.5, delta=1e-5, sensitivity=1.0)
+        sigma_loose = calibrate_gaussian_sigma(epsilon=2.0, delta=1e-5, sensitivity=1.0)
+        assert sigma_tight > sigma_loose
+
+    def test_invalid_params_raise(self):
+        """Non-positive epsilon or delta should raise ValueError."""
+        from sfl.privacy.dp import calibrate_gaussian_sigma
+
+        with pytest.raises(ValueError):
+            calibrate_gaussian_sigma(epsilon=0, delta=1e-5, sensitivity=1.0)
+        with pytest.raises(ValueError):
+            calibrate_gaussian_sigma(epsilon=1.0, delta=-1, sensitivity=1.0)
+
+
 # ── SecAggConfig ────────────────────────────────────────────────────────────
 
 
