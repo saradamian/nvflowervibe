@@ -19,7 +19,11 @@ SecAgg:
 """
 
 from sfl.privacy.dp import wrap_strategy_with_dp, DPConfig, calibrate_gaussian_sigma
-from sfl.privacy.adaptive_clip import AdaptiveClipWrapper, AdaptiveClipConfig
+from sfl.privacy.adaptive_clip import (
+    AdaptiveClipWrapper,
+    AdaptiveClipConfig,
+    make_per_layer_clip_mod,
+)
 from sfl.privacy.filters import (
     make_percentile_privacy_mod,
     make_svt_privacy_mod,
@@ -55,6 +59,7 @@ __all__ = [
     "DPConfig",
     "AdaptiveClipWrapper",
     "AdaptiveClipConfig",
+    "make_per_layer_clip_mod",
     "calibrate_gaussian_sigma",
     "build_secagg_config",
     "SecAggConfig",

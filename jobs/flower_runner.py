@@ -208,6 +208,22 @@ def parse_args() -> argparse.Namespace:
         help="Enable error feedback: accumulate compression residuals across rounds",
     )
 
+    # Per-layer clipping
+    parser.add_argument(
+        "--per-layer-clip",
+        type=float,
+        default=None,
+        metavar="NORM",
+        help="Enable per-layer clipping with this default L2 norm per layer "
+             "(Yu et al., ICLR 2022). Clips each parameter tensor independently.",
+    )
+    parser.add_argument(
+        "--per-layer-clip-map",
+        type=str,
+        default=None,
+        help="JSON mapping of layer index → clip norm, e.g. '{\"0\": 5.0, \"1\": 2.0}'",
+    )
+
     # Secure Aggregation
     parser.add_argument(
         "--secagg",
@@ -354,6 +370,18 @@ def main() -> int:
                 noise_scale=args.compress_noise,
                 use_random_mask=not args.compress_topk,
                 error_feedback=args.compress_error_feedback,
+            )
+        )
+    if args.per_layer_clip is not None:
+        import json
+        from sfl.privacy.adaptive_clip import make_per_layer_clip_mod
+        clip_map = None
+        if args.per_layer_clip_map:
+            clip_map = {int(k): v for k, v in json.loads(args.per_layer_clip_map).items()}
+        client_mods.append(
+            make_per_layer_clip_mod(
+                clip_norms=clip_map,
+                default_clip=args.per_layer_clip,
             )
         )
     if args.secagg:
