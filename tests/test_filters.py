@@ -10,6 +10,12 @@ import numpy as np
 import pytest
 
 try:
+    from dp_accounting.pld.privacy_loss_distribution import from_gaussian_mechanism
+    _has_dp_accounting = True
+except ImportError:
+    _has_dp_accounting = False
+
+try:
     import tenseal
     _has_tenseal = True
 except ImportError:
@@ -489,6 +495,34 @@ class TestGradientCompressionMod:
         # Top 2 by abs value are indices 2 (0.9) and 4 (0.8)
         assert r1[0][2] != 0  # 0.9 should be kept
         assert r1[0][4] != 0  # 0.8 should be kept
+
+    def test_calibrated_noise_requires_delta_and_clip(self):
+        """epsilon without delta or clipping_norm should raise."""
+        with pytest.raises(ValueError, match="delta and clipping_norm"):
+            make_gradient_compression_mod(
+                compression_ratio=0.1, epsilon=1.0,
+            )
+
+    @pytest.mark.skipif(
+        not _has_dp_accounting,
+        reason="dp-accounting not installed",
+    )
+    def test_calibrated_noise_applied(self):
+        """With epsilon set, noise should be calibrated (different from heuristic)."""
+        np.random.seed(42)
+        params = [np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)]
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_gradient_compression_mod(
+            compression_ratio=1.0, use_random_mask=False,
+            epsilon=1.0, delta=1e-5, clipping_norm=5.0,
+        )
+        call_next = MagicMock(return_value=out_msg)
+        result = mod(in_msg, MagicMock(spec=Context), call_next)
+        result_params = _extract_params(result)
+
+        # Values should be modified by calibrated noise
+        assert not np.allclose(result_params[0], [1.0, 2.0, 3.0, 4.0, 5.0])
 
 
 # ── HE Tests ───────────────────────────────────────────────────────────────
