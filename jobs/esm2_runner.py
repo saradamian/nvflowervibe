@@ -151,6 +151,11 @@ Examples:
     parser.add_argument("--compress-error-feedback", action="store_true",
                         help="Enable error feedback: accumulate compression residuals across rounds")
 
+    # Partial freezing (Lambda-SecAgg)
+    parser.add_argument("--freeze-layers", type=str, default=None,
+                        help="Comma-separated trainable layer indices (e.g. '4,5,6'). "
+                             "Frozen layers stripped from updates before SecAgg.")
+
     # Per-layer clipping
     parser.add_argument("--per-layer-clip", type=float, default=None, metavar="NORM",
                         help="Enable per-layer clipping with this default L2 norm per layer "
@@ -345,6 +350,10 @@ def run_flower(args: argparse.Namespace, logger) -> int:
         if args.dpsgd_ghost:
             os.environ["SFL_DPSGD_GHOST"] = "true"
 
+    if args.freeze_layers is not None:
+        from sfl.privacy.filters import make_partial_freeze_mod
+        trainable = [int(x.strip()) for x in args.freeze_layers.split(",")]
+        client_mods.append(make_partial_freeze_mod(trainable_indices=trainable))
     if args.secagg:
         from flwr.client.mod import secaggplus_mod
         client_mods.append(secaggplus_mod)

@@ -475,6 +475,29 @@ It requires the `SecAggPlusWorkflow` on the server and `secaggplus_mod`
 on clients. See the [Flower SecAgg documentation](https://flower.ai/docs/framework/how-to-use-secagg.html)
 for deployment details.
 
+### Partial Freezing (Lambda-SecAgg)
+
+When fine-tuning large models like ESM2, most layers are frozen and only
+a subset are trained. The `--freeze-layers` flag strips frozen layers
+from client updates before they pass through SecAgg, reducing the volume
+of data that needs secret sharing and encryption.
+
+```bash
+# Only layers 4, 5, 6 are trainable — freeze everything else
+python jobs/esm2_runner.py --secagg --freeze-layers 4,5,6
+
+# Combine with DP and SecAgg for full protection
+python jobs/esm2_runner.py --dp --secagg --freeze-layers 4,5,6
+```
+
+| Flag              | Default | Description                                    |
+|-------------------|---------|------------------------------------------------|
+| `--freeze-layers` | off     | Comma-separated trainable layer indices to keep|
+
+This reduces SecAgg overhead from O(P) to O(lambda * P), where lambda is
+the fraction of trainable parameters. For ESM2 with only the last few
+layers unfrozen, this can be a 90%+ reduction in SecAgg cost.
+
 ### Homomorphic Encryption (HE)
 
 HE allows the server to aggregate encrypted model updates without ever

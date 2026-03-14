@@ -208,6 +208,16 @@ def parse_args() -> argparse.Namespace:
         help="Enable error feedback: accumulate compression residuals across rounds",
     )
 
+    # Partial freezing (Lambda-SecAgg)
+    parser.add_argument(
+        "--freeze-layers",
+        type=str,
+        default=None,
+        help="Comma-separated trainable layer indices (e.g. '4,5,6'). "
+             "Frozen layers are stripped from updates before SecAgg, "
+             "reducing overhead. All other layers are excluded.",
+    )
+
     # Per-layer clipping
     parser.add_argument(
         "--per-layer-clip",
@@ -384,6 +394,10 @@ def main() -> int:
                 default_clip=args.per_layer_clip,
             )
         )
+    if args.freeze_layers is not None:
+        from sfl.privacy.filters import make_partial_freeze_mod
+        trainable = [int(x.strip()) for x in args.freeze_layers.split(",")]
+        client_mods.append(make_partial_freeze_mod(trainable_indices=trainable))
     if args.secagg:
         from flwr.client.mod import secaggplus_mod
         client_mods.append(secaggplus_mod)

@@ -773,4 +773,101 @@ class TestPercentileSensitivity:
         assert r_many[0].shape == (100,)
 
 
+# ── Partial Freeze (Lambda-SecAgg) Tests ──────────────────────────────────
+
+
+class TestPartialFreezeMod:
+    """Tests for Lambda-SecAgg partial freezing mod."""
+
+    def test_strips_frozen_layers(self):
+        """Only trainable layers should remain in output."""
+        from sfl.privacy.filters import make_partial_freeze_mod
+
+        params = [
+            np.ones(10, dtype=np.float32),   # layer 0 (frozen)
+            np.ones(20, dtype=np.float32),   # layer 1 (trainable)
+            np.ones(30, dtype=np.float32),   # layer 2 (frozen)
+            np.ones(40, dtype=np.float32),   # layer 3 (trainable)
+        ]
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_partial_freeze_mod(trainable_indices=[1, 3])
+        result = mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg))
+        result_params = _extract_params(result)
+
+        assert len(result_params) == 2
+        assert result_params[0].shape == (20,)  # layer 1
+        assert result_params[1].shape == (40,)  # layer 3
+
+    def test_noop_when_no_indices(self):
+        """With trainable_indices=None, all layers should pass through."""
+        from sfl.privacy.filters import make_partial_freeze_mod
+
+        params = [np.ones(10, dtype=np.float32), np.ones(20, dtype=np.float32)]
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_partial_freeze_mod(trainable_indices=None)
+        result = mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg))
+        result_params = _extract_params(result)
+
+        assert len(result_params) == 2
+
+    def test_preserves_trainable_values(self):
+        """Trainable layer values should be unchanged."""
+        from sfl.privacy.filters import make_partial_freeze_mod
+
+        layer1 = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        params = [
+            np.zeros(5, dtype=np.float32),  # frozen
+            layer1.copy(),                   # trainable
+        ]
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_partial_freeze_mod(trainable_indices=[1])
+        result = mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg))
+        result_params = _extract_params(result)
+
+        assert len(result_params) == 1
+        np.testing.assert_array_equal(result_params[0], layer1)
+
+    def test_stores_indices_in_metrics(self):
+        """Trainable indices should be stored in fit_res metrics."""
+        from sfl.privacy.filters import make_partial_freeze_mod
+
+        params = [np.ones(10, dtype=np.float32)] * 4
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_partial_freeze_mod(trainable_indices=[0, 2])
+        result = mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg))
+
+        fit_res = compat.recorddict_to_fitres(result.content, keep_input=True)
+        assert "_trainable_indices" in fit_res.metrics
+        assert fit_res.metrics["_trainable_indices"] == "0,2"
+
+    def test_size_reduction(self):
+        """Output should be smaller than input when layers are frozen."""
+        from sfl.privacy.filters import make_partial_freeze_mod
+
+        params = [
+            np.ones(1000, dtype=np.float32),  # layer 0 (frozen)
+            np.ones(100, dtype=np.float32),   # layer 1 (trainable)
+        ]
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_partial_freeze_mod(trainable_indices=[1])
+        result = mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg))
+        result_params = _extract_params(result)
+
+        original_size = sum(p.size for p in params)
+        result_size = sum(p.size for p in result_params)
+        assert result_size < original_size
+        assert result_size == 100
+
+    def test_exported_from_privacy_init(self):
+        """make_partial_freeze_mod should be importable from sfl.privacy."""
+        from sfl.privacy import make_partial_freeze_mod, make_partial_freeze_strategy
+        assert callable(make_partial_freeze_mod)
+        assert callable(make_partial_freeze_strategy)
+
+
 

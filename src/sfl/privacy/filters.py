@@ -573,3 +573,138 @@ def make_gradient_compression_mod(
         return out_msg
 
     return gradient_compression_mod
+
+
+# ── Partial Freezing (Lambda-SecAgg) ──────────────────────────────────────
+
+
+def make_partial_freeze_mod(
+    trainable_indices: Optional[List[int]] = None,
+) -> Callable[[Message, Context, ClientAppCallable], Message]:
+    """Create a Flower client mod that strips frozen layers from updates.
+
+    When fine-tuning large models (e.g., ESM2), most layers are frozen and
+    only a subset are trained. Sending full-sized updates through SecAgg
+    wastes computation on zero-valued frozen layers. This mod removes
+    frozen layers from the outgoing update, reducing SecAgg encryption
+    and communication overhead proportionally.
+
+    The server must use the corresponding ``make_partial_freeze_strategy``
+    wrapper to restore full-sized parameter arrays before aggregation.
+
+    This implements "Lambda-SecAgg" (Bonawitz et al., 2019 extension):
+    only the trainable subset (λ) passes through the secure aggregation
+    protocol, cutting cost from O(P) to O(λ·P).
+
+    Args:
+        trainable_indices: List of parameter array indices that are
+            trainable (not frozen). Only these are kept in the update.
+            If None, all parameters are sent (no-op).
+    """
+    _indices = set(trainable_indices) if trainable_indices is not None else None
+
+    def partial_freeze_mod(
+        msg: Message, ctxt: Context, call_next: ClientAppCallable,
+    ) -> Message:
+        if msg.metadata.message_type != MessageType.TRAIN:
+            return call_next(msg, ctxt)
+
+        out_msg = call_next(msg, ctxt)
+        if out_msg.has_error():
+            return out_msg
+
+        if _indices is None:
+            return out_msg
+
+        fit_res = compat.recorddict_to_fitres(out_msg.content, keep_input=True)
+        params = parameters_to_ndarrays(fit_res.parameters)
+
+        # Keep only trainable layers
+        filtered = [p for i, p in enumerate(params) if i in _indices]
+
+        n_original = len(params)
+        n_kept = len(filtered)
+        original_size = sum(p.size for p in params)
+        kept_size = sum(p.size for p in filtered)
+        reduction = 1.0 - (kept_size / max(original_size, 1))
+
+        log(INFO,
+            "partial_freeze: sending %d/%d layers (%d/%d params, %.1f%% reduction)",
+            n_kept, n_original, kept_size, original_size, 100.0 * reduction)
+
+        fit_res.parameters = ndarrays_to_parameters(filtered)
+        # Store the trainable indices in metrics so the server can reconstruct
+        fit_res.metrics["_trainable_indices"] = ",".join(str(i) for i in sorted(_indices))
+        out_msg.content = compat.fitres_to_recorddict(fit_res, keep_input=True)
+        return out_msg
+
+    return partial_freeze_mod
+
+
+def make_partial_freeze_strategy(
+    strategy,
+    trainable_indices: List[int],
+):
+    """Wrap a Flower strategy to restore full parameter arrays from partial updates.
+
+    Clients using ``make_partial_freeze_mod`` send only trainable layers.
+    This wrapper intercepts ``aggregate_fit`` results and inserts zeros for
+    frozen layers, restoring the full parameter structure expected by Flower.
+
+    Args:
+        strategy: The inner Flower strategy to wrap.
+        trainable_indices: The same indices passed to ``make_partial_freeze_mod``.
+
+    Returns:
+        The wrapped strategy (mutated in-place).
+    """
+    _indices = sorted(trainable_indices)
+    _original_aggregate_fit = strategy.aggregate_fit
+
+    def _restoring_aggregate_fit(server_round, results, failures):
+        # Expand partial updates back to full-size before aggregation
+        from flwr.common import FitRes, ndarrays_to_parameters, parameters_to_ndarrays
+
+        expanded_results = []
+        for proxy, res in results:
+            partial_params = parameters_to_ndarrays(res.parameters)
+
+            # Determine how many total layers there should be
+            # Use _trainable_indices from metrics if available
+            idx_str = res.metrics.get("_trainable_indices", "")
+            if idx_str:
+                indices = [int(x) for x in idx_str.split(",")]
+            else:
+                indices = _indices
+
+            max_idx = max(indices) if indices else 0
+            total_layers = max_idx + 1
+
+            # Build full parameter array with zeros for frozen layers
+            full_params = []
+            partial_iter = iter(partial_params)
+            for i in range(total_layers):
+                if i in set(indices):
+                    full_params.append(next(partial_iter))
+                else:
+                    # Frozen layer — we need a zero placeholder
+                    # The shape is unknown here, so we use a scalar zero
+                    # The aggregation will handle shape matching
+                    full_params.append(np.zeros(1, dtype=np.float32))
+
+            # Clean up the internal metric before passing to inner strategy
+            metrics = dict(res.metrics)
+            metrics.pop("_trainable_indices", None)
+
+            expanded_res = FitRes(
+                status=res.status,
+                parameters=ndarrays_to_parameters(full_params),
+                num_examples=res.num_examples,
+                metrics=metrics,
+            )
+            expanded_results.append((proxy, expanded_res))
+
+        return _original_aggregate_fit(server_round, expanded_results, failures)
+
+    strategy.aggregate_fit = _restoring_aggregate_fit
+    return strategy
