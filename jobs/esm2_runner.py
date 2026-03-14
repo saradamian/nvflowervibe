@@ -149,6 +149,15 @@ Examples:
     parser.add_argument("--secagg-clip", type=float, default=8.0,
                         help="SecAgg+ clipping range (default: 8.0)")
 
+    # Aggregation strategy
+    parser.add_argument("--aggregation", type=str, default="fedavg",
+                        choices=["fedavg", "krum", "trimmed-mean"],
+                        help="Aggregation strategy (default: fedavg)")
+    parser.add_argument("--krum-byzantine", type=int, default=1,
+                        help="Expected number of Byzantine clients for Multi-Krum (default: 1)")
+    parser.add_argument("--trim-ratio", type=float, default=0.1,
+                        help="Fraction to trim per side for trimmed-mean (default: 0.1)")
+
     return parser.parse_args()
 
 
@@ -257,6 +266,13 @@ def run_flower(args: argparse.Namespace, logger) -> int:
                 use_random_mask=not args.compress_topk,
             )
         )
+    # Aggregation strategy
+    os.environ["SFL_AGGREGATION"] = args.aggregation
+    if args.aggregation == "krum":
+        os.environ["SFL_KRUM_BYZANTINE"] = str(args.krum_byzantine)
+    elif args.aggregation == "trimmed-mean":
+        os.environ["SFL_TRIM_RATIO"] = str(args.trim_ratio)
+
     if args.secagg:
         from flwr.client.mod import secaggplus_mod
         client_mods.append(secaggplus_mod)
