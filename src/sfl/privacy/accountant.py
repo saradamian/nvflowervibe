@@ -1,9 +1,12 @@
 """
 Privacy accounting for differential privacy.
 
-Tracks cumulative (ε,δ)-DP guarantee across FL rounds using Google's
-dp-accounting library with the PLD (Privacy Loss Distribution) accountant,
-which provides tighter composition bounds than RDP for Gaussian mechanisms.
+Tracks cumulative (ε,δ)-DP guarantee across FL rounds using either:
+- **PLD** (Privacy Loss Distribution) via Google's dp-accounting (default)
+- **PRV** (Privacy Random Variable) via Microsoft's prv_accountant
+
+Both provide tight composition bounds for Gaussian mechanisms; PLD is the
+default, PRV additionally returns error bounds (ε_low, ε_est, ε_high).
 
 When sample_rate < 1.0, applies Poisson subsampling amplification for
 tighter privacy bounds (no extra noise needed — pure accounting win).
@@ -11,21 +14,31 @@ tighter privacy bounds (no extra noise needed — pure accounting win).
 Usage:
     from sfl.privacy.accountant import PrivacyAccountant
 
+    # Default PLD backend
     accountant = PrivacyAccountant(
         noise_multiplier=1.0,
         sample_rate=0.5,
         delta=1e-5,
         max_epsilon=10.0,
     )
+
+    # PRV backend (Microsoft) — returns error bounds
+    accountant = PrivacyAccountant(
+        noise_multiplier=1.0,
+        sample_rate=0.5,
+        delta=1e-5,
+        max_epsilon=10.0,
+        backend="prv",
+    )
+
     for round_num in range(num_rounds):
-        # ... training round ...
         eps = accountant.step()
         if accountant.budget_exhausted:
             break
 """
 
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Literal, Optional, Tuple
 
 from sfl.utils.logging import get_logger
 
@@ -48,6 +61,13 @@ try:
 except ImportError:
     HAS_DP_ACCOUNTING = False
 
+try:
+    from prv_accountant import PRVAccountant as _PRVAccountant
+    from prv_accountant import PoissonSubsampledGaussianMechanism as _PSGM
+    HAS_PRV_ACCOUNTANT = True
+except ImportError:
+    HAS_PRV_ACCOUNTANT = False
+
 
 @dataclass
 class AccountingConfig:
@@ -58,16 +78,23 @@ class AccountingConfig:
             dataset size. 1e-5 is a common default.
         max_epsilon: Stop training when cumulative ε exceeds this.
             Set to float('inf') to disable budget enforcement.
+        backend: Accounting backend: ``"pld"`` (Google dp-accounting,
+            default) or ``"prv"`` (Microsoft prv_accountant).
     """
     delta: float = 1e-5
     max_epsilon: float = 10.0
+    backend: Literal["pld", "prv"] = "pld"
 
 
 class PrivacyAccountant:
     """Tracks cumulative (ε,δ)-DP across federated learning rounds.
 
-    Uses Google's dp-accounting PLD (Privacy Loss Distribution) accountant
-    for tight composition of Gaussian mechanism privacy loss.
+    Supports two backends:
+    - **PLD** (default): Google's dp-accounting PLD accountant. Composes
+      per-round DpEvents for tight (ε,δ) tracking.
+    - **PRV**: Microsoft's prv_accountant. Uses the Privacy Random
+      Variable framework with FFT-based composition. Returns error
+      bounds (ε_low, ε_est, ε_high) accessible via ``epsilon_bounds``.
 
     Args:
         noise_multiplier: Ratio of noise std to clipping norm (σ/C).
@@ -81,6 +108,7 @@ class PrivacyAccountant:
             If False, only logs a warning (legacy behavior).
         num_total: Total number of clients in the pool. Required
             for per-round participation tracking via ``step()``.
+        backend: ``"pld"`` or ``"prv"``.
     """
 
     def __init__(
@@ -91,13 +119,9 @@ class PrivacyAccountant:
         max_epsilon: float = 10.0,
         enforce_budget: bool = True,
         num_total: Optional[int] = None,
+        backend: Literal["pld", "prv"] = "pld",
     ):
-        if not HAS_DP_ACCOUNTING:
-            raise ImportError(
-                "dp-accounting is required for privacy accounting. "
-                "Install with: pip install 'sfl[privacy]'"
-            )
-
+        self._backend = backend
         self._noise_multiplier = noise_multiplier
         self._sample_rate = sample_rate
         self._delta = delta
@@ -105,26 +129,67 @@ class PrivacyAccountant:
         self._enforce_budget = enforce_budget
         self._rounds = 0
         self._num_total = num_total
+        # PRV error bounds: (eps_low, eps_estimate, eps_high)
+        self._prv_bounds: Optional[Tuple[float, float, float]] = None
 
-        # Build default per-round DpEvent with subsampling amplification.
-        self._base_event = dp_event.GaussianDpEvent(noise_multiplier=noise_multiplier)
-        if sample_rate < 1.0:
-            self._round_event = dp_event.PoissonSampledDpEvent(
+        if backend == "prv":
+            if not HAS_PRV_ACCOUNTANT:
+                raise ImportError(
+                    "prv-accountant is required for the PRV backend. "
+                    "Install with: pip install prv-accountant"
+                )
+            # PRV accountant is stateless — we recompute each step
+            # by passing the current round count. Store config only.
+            self._prv_mechanism = _PSGM(
+                noise_multiplier=noise_multiplier,
                 sampling_probability=sample_rate,
-                event=self._base_event,
             )
         else:
-            self._round_event = self._base_event
+            if not HAS_DP_ACCOUNTING:
+                raise ImportError(
+                    "dp-accounting is required for privacy accounting. "
+                    "Install with: pip install 'sfl[privacy]'"
+                )
 
-        # Internal PLD accountant for tight composition
-        self._accountant = pld_privacy_accountant.PLDAccountant()
+            # Build default per-round DpEvent with subsampling amplification.
+            self._base_event = dp_event.GaussianDpEvent(
+                noise_multiplier=noise_multiplier
+            )
+            if sample_rate < 1.0:
+                self._round_event = dp_event.PoissonSampledDpEvent(
+                    sampling_probability=sample_rate,
+                    event=self._base_event,
+                )
+            else:
+                self._round_event = self._base_event
+
+            # Internal PLD accountant for tight composition
+            self._accountant = pld_privacy_accountant.PLDAccountant()
 
         logger.info(
-            "Privacy accountant initialized: noise=%.3f, sample_rate=%.3f, "
-            "delta=%.1e, max_eps=%.1f%s",
-            noise_multiplier, sample_rate, delta, max_epsilon,
+            "Privacy accountant initialized: backend=%s, noise=%.3f, "
+            "sample_rate=%.3f, delta=%.1e, max_eps=%.1f%s",
+            backend, noise_multiplier, sample_rate, delta, max_epsilon,
             " (subsampling amplification ON)" if sample_rate < 1.0 else "",
         )
+
+    def _compute_prv_epsilon(self) -> float:
+        """Compute ε via PRV accountant for the current round count."""
+        # PRV needs max_self_compositions set upfront; use a safe upper
+        # bound (current rounds + generous headroom).
+        max_comp = max(self._rounds * 2, 1000)
+        acc = _PRVAccountant(
+            prvs=[self._prv_mechanism],
+            max_self_compositions=[max_comp],
+            eps_error=0.1,
+            delta_error=self._delta * 1e-3,
+        )
+        low, est, high = acc.compute_epsilon(
+            delta=self._delta,
+            num_self_compositions=[self._rounds],
+        )
+        self._prv_bounds = (low, est, high)
+        return est
 
     def step(self, num_participants: Optional[int] = None) -> float:
         """Record one FL round and return updated cumulative epsilon.
@@ -135,38 +200,48 @@ class PrivacyAccountant:
                 sample count), a per-round DpEvent with the correct
                 sampling probability is composed instead of the default
                 fixed-rate event. This gives tighter bounds when
-                participation varies across rounds.
+                participation varies across rounds.  (PLD backend only;
+                PRV uses the fixed sample_rate.)
 
         Returns:
             Current cumulative ε at the configured δ.
         """
         self._rounds += 1
 
-        # Use per-round event if actual participation differs from default
-        if (
-            num_participants is not None
-            and self._num_total is not None
-            and self._num_total > 0
-            and num_participants != round(self._sample_rate * self._num_total)
-        ):
-            actual_rate = min(num_participants / self._num_total, 1.0)
-            if actual_rate < 1.0:
-                event = dp_event.PoissonSampledDpEvent(
-                    sampling_probability=actual_rate,
-                    event=self._base_event,
-                )
-            else:
-                event = self._base_event
-            self._accountant.compose(event)
+        if self._backend == "prv":
+            eps = self._compute_prv_epsilon()
         else:
-            self._accountant.compose(self._round_event)
+            # Use per-round event if actual participation differs from default
+            if (
+                num_participants is not None
+                and self._num_total is not None
+                and self._num_total > 0
+                and num_participants != round(self._sample_rate * self._num_total)
+            ):
+                actual_rate = min(num_participants / self._num_total, 1.0)
+                if actual_rate < 1.0:
+                    event = dp_event.PoissonSampledDpEvent(
+                        sampling_probability=actual_rate,
+                        event=self._base_event,
+                    )
+                else:
+                    event = self._base_event
+                self._accountant.compose(event)
+            else:
+                self._accountant.compose(self._round_event)
 
-        eps = self._accountant.get_epsilon(self._delta)
+            eps = self._accountant.get_epsilon(self._delta)
+
+        bounds_str = ""
+        if self._prv_bounds is not None:
+            low, _, high = self._prv_bounds
+            bounds_str = f" [ε_low={low:.4f}, ε_high={high:.4f}]"
 
         logger.info(
-            "Round %d: ε = %.4f (δ = %.1e) | budget remaining: %.4f",
+            "Round %d: ε = %.4f (δ = %.1e) | budget remaining: %.4f%s",
             self._rounds, eps, self._delta,
             max(0.0, self._max_epsilon - eps),
+            bounds_str,
         )
 
         if self.budget_exhausted:
@@ -187,7 +262,20 @@ class PrivacyAccountant:
         """Current cumulative ε at the configured δ."""
         if self._rounds == 0:
             return 0.0
+        if self._backend == "prv":
+            return self._compute_prv_epsilon()
         return self._accountant.get_epsilon(self._delta)
+
+    @property
+    def epsilon_bounds(self) -> Optional[Tuple[float, float, float]]:
+        """PRV error bounds (ε_low, ε_estimate, ε_high).
+
+        Only available when backend="prv". Returns None for PLD backend.
+        """
+        if self._backend == "prv" and self._rounds > 0:
+            self._compute_prv_epsilon()
+            return self._prv_bounds
+        return None
 
     @property
     def delta(self) -> float:
@@ -204,6 +292,11 @@ class PrivacyAccountant:
         """True if cumulative ε >= max_epsilon."""
         return self.epsilon >= self._max_epsilon
 
+    @property
+    def backend(self) -> str:
+        """Active accounting backend name."""
+        return self._backend
+
     def compute_epsilon_for_rounds(self, num_rounds: int) -> float:
         """Predict ε for a given number of rounds (without advancing state).
 
@@ -216,6 +309,19 @@ class PrivacyAccountant:
         Returns:
             Predicted ε at the configured δ.
         """
+        if self._backend == "prv":
+            max_comp = max(num_rounds * 2, 1000)
+            acc = _PRVAccountant(
+                prvs=[self._prv_mechanism],
+                max_self_compositions=[max_comp],
+                eps_error=0.1,
+                delta_error=self._delta * 1e-3,
+            )
+            _, est, _ = acc.compute_epsilon(
+                delta=self._delta,
+                num_self_compositions=[num_rounds],
+            )
+            return est
         preview = pld_privacy_accountant.PLDAccountant()
         preview.compose(self._round_event, count=num_rounds)
         return preview.get_epsilon(self._delta)

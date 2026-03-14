@@ -38,9 +38,10 @@ try:
         AccountingConfig,
         BudgetExhaustedError,
         compose_epsilon,
+        HAS_PRV_ACCOUNTANT,
     )
 except ImportError:
-    pass
+    HAS_PRV_ACCOUNTANT = False
 
 # Optional: homomorphic encryption (requires tenseal)
 try:
@@ -67,6 +68,7 @@ __all__ = [
     "AccountingConfig",
     "BudgetExhaustedError",
     "compose_epsilon",
+    "HAS_PRV_ACCOUNTANT",
     "HEContext",
     "HEConfig",
 ]

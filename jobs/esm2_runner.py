@@ -110,6 +110,10 @@ Examples:
                         help="Noise multiplier for private quantile tracking in adaptive "
                              "clipping (default: 0.1 when adaptive clipping enabled, "
                              "0 otherwise). Set to 0 for non-private (testing only).")
+    parser.add_argument("--dp-accounting-backend", type=str, default="pld",
+                        choices=["pld", "prv"],
+                        help="Privacy accounting backend: pld (Google, default) or "
+                             "prv (Microsoft, with error bounds)")
 
     # Privacy filters
     parser.add_argument("--percentile-privacy", type=int, default=None, metavar="PCT",
@@ -248,6 +252,8 @@ def run_flower(args: argparse.Namespace, logger) -> int:
             # Default to private quantile tracking (0.1) unless explicitly set
             quantile_noise = args.dp_quantile_noise if args.dp_quantile_noise is not None else 0.1
             os.environ["SFL_DP_QUANTILE_NOISE"] = str(quantile_noise)
+
+        os.environ["SFL_DP_ACCOUNTING_BACKEND"] = args.dp_accounting_backend
 
         if args.dp_mode == "client":
             from flwr.client.mod import fixedclipping_mod

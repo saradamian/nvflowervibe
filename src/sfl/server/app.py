@@ -135,6 +135,7 @@ def server_fn(context: Context) -> ServerAppComponents:
             quantile_noise_multiplier=float(
                 os.environ.get("SFL_DP_QUANTILE_NOISE", "0.0")
             ),
+            accounting_backend=os.environ.get("SFL_DP_ACCOUNTING_BACKEND", "pld"),
         )
         strategy = wrap_strategy_with_dp(strategy, dp_config)
     

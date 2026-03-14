@@ -1,4 +1,4 @@
-"""Tests for privacy accountant (PLD-based DP accounting)."""
+"""Tests for privacy accountant (PLD and PRV backends)."""
 
 import pytest
 
@@ -7,6 +7,12 @@ try:
     _has_dp_accounting = True
 except ImportError:
     _has_dp_accounting = False
+
+try:
+    from prv_accountant import PRVAccountant as _PRVAccountant
+    _has_prv_accountant = True
+except ImportError:
+    _has_prv_accountant = False
 
 pytestmark = pytest.mark.skipif(
     not _has_dp_accounting, reason="dp-accounting not installed"
@@ -210,3 +216,119 @@ class TestPLDComposition:
             delta_server=1e-5, delta_client=2e-5,
         )
         assert total_delta == pytest.approx(3e-5)
+
+
+@pytest.mark.skipif(not _has_prv_accountant, reason="prv-accountant not installed")
+class TestPRVAccountant:
+    """Tests for the Microsoft PRV accountant backend."""
+
+    def test_prv_epsilon_increases_with_rounds(self):
+        """PRV epsilon must increase monotonically."""
+        acc = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, enforce_budget=False,
+            backend="prv",
+        )
+        epsilons = [acc.step() for _ in range(5)]
+        for i in range(1, len(epsilons)):
+            assert epsilons[i] > epsilons[i - 1]
+
+    def test_prv_higher_noise_lower_epsilon(self):
+        """More noise → lower epsilon for the PRV backend."""
+        acc_low = PrivacyAccountant(
+            noise_multiplier=0.5, delta=1e-5, enforce_budget=False,
+            backend="prv",
+        )
+        acc_high = PrivacyAccountant(
+            noise_multiplier=2.0, delta=1e-5, enforce_budget=False,
+            backend="prv",
+        )
+        for _ in range(5):
+            acc_low.step()
+            acc_high.step()
+        assert acc_high.epsilon < acc_low.epsilon
+
+    def test_prv_matches_pld(self):
+        """PRV and PLD should give similar epsilon values."""
+        acc_pld = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, enforce_budget=False,
+            backend="pld",
+        )
+        acc_prv = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, enforce_budget=False,
+            backend="prv",
+        )
+        for _ in range(10):
+            acc_pld.step()
+            acc_prv.step()
+        # PRV returns estimate; should be close to PLD (within 1.0)
+        assert abs(acc_prv.epsilon - acc_pld.epsilon) < 1.0
+
+    def test_prv_epsilon_bounds(self):
+        """PRV backend should expose error bounds."""
+        acc = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, enforce_budget=False,
+            backend="prv",
+        )
+        for _ in range(5):
+            acc.step()
+        bounds = acc.epsilon_bounds
+        assert bounds is not None
+        low, est, high = bounds
+        assert low <= est <= high
+        assert low > 0
+
+    def test_prv_budget_exhausted(self):
+        """PRV backend should respect budget enforcement."""
+        acc = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, max_epsilon=5.0,
+            enforce_budget=True, backend="prv",
+        )
+        with pytest.raises(BudgetExhaustedError):
+            for _ in range(20):
+                acc.step()
+
+    def test_prv_compute_epsilon_for_rounds(self):
+        """PRV prediction should not advance state."""
+        acc = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, backend="prv",
+        )
+        predicted = acc.compute_epsilon_for_rounds(10)
+        assert predicted > 0
+        assert acc.rounds == 0
+
+    def test_prv_subsampling_lowers_epsilon(self):
+        """PRV with subsampling should give lower ε."""
+        acc_full = PrivacyAccountant(
+            noise_multiplier=1.0, sample_rate=1.0, delta=1e-5,
+            enforce_budget=False, backend="prv",
+        )
+        acc_half = PrivacyAccountant(
+            noise_multiplier=1.0, sample_rate=0.5, delta=1e-5,
+            enforce_budget=False, backend="prv",
+        )
+        for _ in range(10):
+            acc_full.step()
+            acc_half.step()
+        assert acc_half.epsilon < acc_full.epsilon
+
+    def test_prv_backend_property(self):
+        """Backend property should return 'prv'."""
+        acc = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, backend="prv",
+        )
+        assert acc.backend == "prv"
+
+    def test_pld_backend_property(self):
+        """Backend property should return 'pld' for default."""
+        acc = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, backend="pld",
+        )
+        assert acc.backend == "pld"
+
+    def test_pld_no_epsilon_bounds(self):
+        """PLD backend should return None for epsilon_bounds."""
+        acc = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, backend="pld",
+        )
+        acc.step()
+        assert acc.epsilon_bounds is None

@@ -109,6 +109,9 @@ class DPConfig:
         clip_learning_rate: Geometric step size for clip norm update.
         quantile_noise_multiplier: Noise multiplier for private quantile
             tracking. 0 = non-private (testing only).
+        accounting_backend: Privacy accounting backend: ``"pld"``
+            (Google dp-accounting, default) or ``"prv"`` (Microsoft
+            prv_accountant). PRV provides error bounds on ε.
     """
     noise_multiplier: float = 1.0
     clipping_norm: float = 10.0
@@ -121,6 +124,7 @@ class DPConfig:
     target_quantile: float = 0.5
     clip_learning_rate: float = 0.2
     quantile_noise_multiplier: float = 0.0
+    accounting_backend: Literal["pld", "prv"] = "pld"
 
     def __post_init__(self):
         if self.noise_multiplier < 0:
@@ -218,6 +222,7 @@ def wrap_strategy_with_dp(
             delta=dp_config.target_delta,
             max_epsilon=dp_config.max_epsilon,
             num_total=dp_config.num_total_clients,
+            backend=dp_config.accounting_backend,
         )
     except ImportError:
         logger.warning(
