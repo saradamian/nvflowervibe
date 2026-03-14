@@ -4,9 +4,16 @@ and homomorphic encryption support.
 """
 
 from unittest.mock import MagicMock, patch
+import unittest
 
 import numpy as np
 import pytest
+
+try:
+    import tenseal
+    _has_tenseal = True
+except ImportError:
+    _has_tenseal = False
 from flwr.common import (
     FitRes,
     Status,
@@ -271,6 +278,7 @@ class TestExcludeVarsMod:
 # ── HE Tests ───────────────────────────────────────────────────────────────
 
 
+@unittest.skipUnless(_has_tenseal, "tenseal not installed")
 class TestHEContext:
     """Tests for homomorphic encryption (requires tenseal)."""
 
@@ -359,6 +367,7 @@ class TestFilterExports:
         assert callable(make_svt_privacy_mod)
         assert callable(make_exclude_vars_mod)
 
+    @unittest.skipUnless(_has_tenseal, "tenseal not installed")
     def test_he_imports(self):
         from sfl.privacy import HEContext, HEConfig
         assert HEContext is not None
