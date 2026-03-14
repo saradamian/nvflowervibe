@@ -169,11 +169,17 @@ class SVTPrivacyConfig:
         epsilon: Privacy budget. Lower = more private, noisier.
         gamma: Clipping bound (L1 sensitivity) for parameter values.
         tau: Base threshold for SVT selection.
+        optimal_budget: Use numerically-optimal budget split
+            (Lyu et al. 2017) instead of the standard ε/2 + ε/(2c).
+        pre_screen_ratio: Run SVT only on this fraction of
+            parameters (top by magnitude). 1.0 = no pre-screening.
     """
     fraction: float = 0.1
     epsilon: float = 0.1
     gamma: float = 1e-5
     tau: float = 1e-6
+    optimal_budget: bool = True
+    pre_screen_ratio: float = 1.0
 
 
 _SVT_MAX_ITERATIONS = 100
@@ -184,32 +190,31 @@ def make_svt_privacy_mod(
     epsilon: float = 0.1,
     gamma: float = 1e-5,
     tau: float = 1e-6,
+    optimal_budget: bool = True,
+    pre_screen_ratio: float = 1.0,
     **_kwargs,
 ) -> Callable[[Message, Context, ClientAppCallable], Message]:
     """Create a Flower client mod that applies SVT differential privacy.
 
-    Canonical Sparse Vector Technique (Dwork & Roth 2014, Theorem 3.25):
+    Sparse Vector Technique (Dwork & Roth 2014, Theorem 3.25):
     selects a fraction of parameter values using a noisy threshold,
     adds calibrated Laplace noise to accepted values, and zeros the rest.
 
-    Total privacy cost: ε (split as ε/2 for threshold + ε/(2c) per
-    query × c queries, where c = n_upload).
+    When ``optimal_budget=True`` (default), uses the numerically-optimal
+    budget split from Lyu et al. (2017, "Understanding the Sparse Vector
+    Technique for Differential Privacy"):
+        α* = 1 / (1 + √c)
+        ε_threshold = α* · ε
+        ε_per_query = (1 - α*) · ε / c
 
-    Reference:
-        Dwork & Roth, "The Algorithmic Foundations of Differential
-        Privacy" (2014), Section 3.6 (Sparse Vector Technique).
-
-    Algorithm:
-    1. Flatten all params, compute upload budget c = fraction * total_params
-    2. Split budget: ε₁ = ε/2 for threshold, ε₂ = ε/(2c) per query
-    3. Noisy threshold = tau + Laplace(scale = gamma / ε₁)
-    4. For each candidate: accept if |value| + Laplace(scale = gamma / ε₂) >= threshold
-    5. Add output noise Laplace(scale = gamma / ε₂), clip to [-gamma, gamma]
-    6. Zero all non-accepted values
+    When ``pre_screen_ratio < 1.0``, only the top parameters by magnitude
+    are candidates for SVT, reducing c and thus the per-query noise.
     """
     cfg = SVTPrivacyConfig(
         fraction=fraction, epsilon=epsilon,
         gamma=gamma, tau=tau,
+        optimal_budget=optimal_budget,
+        pre_screen_ratio=pre_screen_ratio,
     )
 
     def svt_privacy_mod(
@@ -230,9 +235,28 @@ def make_svt_privacy_mod(
         n_total = delta_w.size
         n_upload = int(min(np.ceil(n_total * cfg.fraction), n_total))
 
-        # Canonical SVT budget split (Dwork & Roth, Theorem 3.25)
-        eps_1 = cfg.epsilon / 2.0               # threshold noise budget
-        eps_2 = cfg.epsilon / (2.0 * n_upload)   # per-query noise budget
+        # Pre-screen: only consider top params by magnitude
+        if cfg.pre_screen_ratio < 1.0:
+            n_screen = max(n_upload, int(np.ceil(n_total * cfg.pre_screen_ratio)))
+            candidate_idx = np.argpartition(
+                np.abs(delta_w), -n_screen
+            )[-n_screen:]
+        else:
+            candidate_idx = np.arange(n_total)
+
+        c = candidate_idx.size  # number of SVT queries
+
+        # Budget split
+        if cfg.optimal_budget and c > 1:
+            # Numerically-optimal split (Lyu et al. 2017)
+            import math
+            alpha = 1.0 / (1.0 + math.sqrt(c))
+            eps_1 = alpha * cfg.epsilon
+            eps_2 = (1.0 - alpha) * cfg.epsilon / c
+        else:
+            # Standard split (Dwork & Roth, Theorem 3.25)
+            eps_1 = cfg.epsilon / 2.0
+            eps_2 = cfg.epsilon / (2.0 * c) if c > 0 else cfg.epsilon
 
         # Noisy threshold
         threshold = cfg.tau + np.random.laplace(scale=cfg.gamma / eps_1)
@@ -242,7 +266,6 @@ def make_svt_privacy_mod(
 
         # Select values above noisy threshold
         clipped_w = np.abs(np.clip(delta_w, -cfg.gamma, cfg.gamma))
-        candidate_idx = np.arange(n_total)
         accepted: list = []
 
         iteration = 0

@@ -159,6 +159,17 @@ def parse_args() -> argparse.Namespace:
         default=0.1,
         help="SVT fraction of params to upload (default: 0.1)",
     )
+    parser.add_argument(
+        "--svt-no-optimal",
+        action="store_true",
+        help="Use standard ε/2 + ε/(2c) budget split instead of optimal",
+    )
+    parser.add_argument(
+        "--svt-prescreen",
+        type=float,
+        default=1.0,
+        help="Pre-screen ratio: run SVT on top X%% by magnitude (default: 1.0, no pre-screening)",
+    )
 
     # Secure Aggregation
     parser.add_argument(
@@ -260,7 +271,11 @@ def main() -> int:
     if args.svt_privacy:
         from sfl.privacy.filters import make_svt_privacy_mod
         client_mods.append(
-            make_svt_privacy_mod(fraction=args.svt_fraction, epsilon=args.svt_epsilon)
+            make_svt_privacy_mod(
+                fraction=args.svt_fraction, epsilon=args.svt_epsilon,
+                optimal_budget=not args.svt_no_optimal,
+                pre_screen_ratio=args.svt_prescreen,
+            )
         )
     if args.secagg:
         from flwr.client.mod import secaggplus_mod
