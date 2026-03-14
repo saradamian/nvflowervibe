@@ -8,6 +8,12 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
 
+try:
+    import opacus  # noqa: F401
+    _has_opacus = True
+except ImportError:
+    _has_opacus = False
+
 from sfl.client.dp_client import DPSGDConfig, enable_dpsgd
 
 
@@ -96,6 +102,7 @@ class TestDPSGDConfig:
         assert cfg.target_delta == 1e-5
 
 
+@pytest.mark.skipif(not _has_opacus, reason="opacus not installed")
 class TestEnableDPSGD:
 
     def test_train_completes(self):
