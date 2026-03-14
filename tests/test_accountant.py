@@ -62,3 +62,23 @@ class TestPrivacyAccountant:
         assert acc.epsilon == 0.0
         assert acc.delta == 1e-5
         assert not acc.budget_exhausted
+
+    def test_subsampling_lowers_epsilon(self):
+        """sample_rate < 1.0 should give strictly lower ε than 1.0."""
+        acc_full = PrivacyAccountant(noise_multiplier=1.0, sample_rate=1.0, delta=1e-5)
+        acc_half = PrivacyAccountant(noise_multiplier=1.0, sample_rate=0.5, delta=1e-5)
+        for _ in range(10):
+            acc_full.step()
+            acc_half.step()
+        assert acc_half.epsilon < acc_full.epsilon
+
+    def test_subsampling_compute_epsilon_for_rounds(self):
+        """compute_epsilon_for_rounds should also reflect subsampling."""
+        acc_full = PrivacyAccountant(noise_multiplier=1.0, sample_rate=1.0, delta=1e-5)
+        acc_half = PrivacyAccountant(noise_multiplier=1.0, sample_rate=0.5, delta=1e-5)
+        eps_full = acc_full.compute_epsilon_for_rounds(20)
+        eps_half = acc_half.compute_epsilon_for_rounds(20)
+        assert eps_half < eps_full
+        # State should not advance
+        assert acc_full.rounds == 0
+        assert acc_half.rounds == 0

@@ -5,6 +5,9 @@ Tracks cumulative (ε,δ)-DP guarantee across FL rounds using Google's
 dp-accounting library with the PLD (Privacy Loss Distribution) accountant,
 which provides tighter composition bounds than RDP for Gaussian mechanisms.
 
+When sample_rate < 1.0, applies Poisson subsampling amplification for
+tighter privacy bounds (no extra noise needed — pure accounting win).
+
 Usage:
     from sfl.privacy.accountant import PrivacyAccountant
 
@@ -28,6 +31,8 @@ from sfl.utils.logging import get_logger
 logger = get_logger(__name__)
 
 try:
+    from dp_accounting import dp_event
+    from dp_accounting.pld import pld_privacy_accountant
     from dp_accounting.pld.privacy_loss_distribution import (
         from_gaussian_mechanism,
     )
@@ -84,17 +89,24 @@ class PrivacyAccountant:
         self._max_epsilon = max_epsilon
         self._rounds = 0
 
-        # Create the per-round PLD for Gaussian mechanism.
-        # standard_deviation = noise_multiplier (sensitivity is normalized to 1).
-        self._round_pld = from_gaussian_mechanism(
-            standard_deviation=noise_multiplier,
-        )
-        self._composed_pld = None
+        # Build per-round DpEvent with subsampling amplification.
+        base_event = dp_event.GaussianDpEvent(noise_multiplier=noise_multiplier)
+        if sample_rate < 1.0:
+            self._round_event = dp_event.PoissonSampledDpEvent(
+                sampling_probability=sample_rate,
+                event=base_event,
+            )
+        else:
+            self._round_event = base_event
+
+        # Internal PLD accountant for tight composition
+        self._accountant = pld_privacy_accountant.PLDAccountant()
 
         logger.info(
             "Privacy accountant initialized: noise=%.3f, sample_rate=%.3f, "
-            "delta=%.1e, max_eps=%.1f",
+            "delta=%.1e, max_eps=%.1f%s",
             noise_multiplier, sample_rate, delta, max_epsilon,
+            " (subsampling amplification ON)" if sample_rate < 1.0 else "",
         )
 
     def step(self) -> float:
@@ -106,12 +118,9 @@ class PrivacyAccountant:
             Current cumulative ε at the configured δ.
         """
         self._rounds += 1
-        if self._composed_pld is None:
-            self._composed_pld = self._round_pld
-        else:
-            self._composed_pld = self._composed_pld.compose(self._round_pld)
+        self._accountant.compose(self._round_event)
 
-        eps = self._composed_pld.get_epsilon_for_delta(self._delta)
+        eps = self._accountant.get_epsilon(self._delta)
 
         logger.info(
             "Round %d: ε = %.4f (δ = %.1e) | budget remaining: %.4f",
@@ -131,9 +140,9 @@ class PrivacyAccountant:
     @property
     def epsilon(self) -> float:
         """Current cumulative ε at the configured δ."""
-        if self._composed_pld is None:
+        if self._rounds == 0:
             return 0.0
-        return self._composed_pld.get_epsilon_for_delta(self._delta)
+        return self._accountant.get_epsilon(self._delta)
 
     @property
     def delta(self) -> float:
@@ -162,5 +171,6 @@ class PrivacyAccountant:
         Returns:
             Predicted ε at the configured δ.
         """
-        composed = self._round_pld.self_compose(num_rounds)
-        return composed.get_epsilon_for_delta(self._delta)
+        preview = pld_privacy_accountant.PLDAccountant()
+        preview.compose(self._round_event, count=num_rounds)
+        return preview.get_epsilon(self._delta)
