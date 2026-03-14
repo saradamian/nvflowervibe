@@ -413,6 +413,11 @@ class GradientCompressionConfig:
             is set.
         clipping_norm: L2 sensitivity bound. Required when
             ``epsilon`` is set.
+        error_feedback: Enable error feedback (FedSparQ-style).
+            Compression residuals are accumulated across rounds and
+            added back to the next round's update before sparsification.
+            This recovers convergence lost to aggressive compression
+            without additional communication cost.
     """
     compression_ratio: float = 0.1
     noise_scale: float = 0.01
@@ -420,6 +425,7 @@ class GradientCompressionConfig:
     epsilon: Optional[float] = None
     delta: Optional[float] = None
     clipping_norm: Optional[float] = None
+    error_feedback: bool = False
 
 
 def make_gradient_compression_mod(
@@ -429,6 +435,7 @@ def make_gradient_compression_mod(
     epsilon: Optional[float] = None,
     delta: Optional[float] = None,
     clipping_norm: Optional[float] = None,
+    error_feedback: bool = False,
 ) -> Callable[[Message, Context, ClientAppCallable], Message]:
     """Create a Flower client mod that compresses gradient updates.
 
@@ -466,7 +473,11 @@ def make_gradient_compression_mod(
         epsilon=epsilon,
         delta=delta,
         clipping_norm=clipping_norm,
+        error_feedback=error_feedback,
     )
+
+    # Error feedback state: accumulated residual from previous rounds
+    _error_state: dict = {"residual": None}
 
     # Calibrate noise if (ε,δ) are provided
     if cfg.epsilon is not None:
@@ -501,6 +512,12 @@ def make_gradient_compression_mod(
         params = parameters_to_ndarrays(fit_res.parameters)
 
         flat = np.concatenate([p.ravel().astype(np.float64) for p in params])
+
+        # Error feedback: add accumulated residual from previous rounds
+        if cfg.error_feedback and _error_state["residual"] is not None:
+            if _error_state["residual"].shape == flat.shape:
+                flat = flat + _error_state["residual"]
+
         n = flat.size
         k = max(1, int(np.ceil(n * cfg.compression_ratio)))
 
@@ -520,6 +537,10 @@ def make_gradient_compression_mod(
         # Build sparse output
         out = np.zeros_like(flat)
         out[selected] = flat[selected]
+
+        # Error feedback: save residual (what was zeroed) for next round
+        if cfg.error_feedback:
+            _error_state["residual"] = flat - out
 
         # Add noise to surviving values
         if k > 0:

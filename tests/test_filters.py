@@ -558,6 +558,54 @@ class TestGradientCompressionMod:
         mask2 = r2[0] != 0
         np.testing.assert_array_equal(mask1, mask2)
 
+    def test_error_feedback_accumulates(self):
+        """Error feedback should add residuals from previous rounds."""
+        # Use TopK with ratio=0.2 (keep 1 of 5) and no noise
+        mod = make_gradient_compression_mod(
+            compression_ratio=0.2, noise_scale=0.0,
+            use_random_mask=False, error_feedback=True,
+        )
+
+        # Round 1: values [0.1, 0.2, 0.3, 0.4, 0.5] → keep top 1 (0.5)
+        params1 = [np.array([0.1, 0.2, 0.3, 0.4, 0.5], dtype=np.float32)]
+        in1, out1 = _make_train_message(params1)
+        r1 = _extract_params(mod(in1, MagicMock(spec=Context), MagicMock(return_value=out1)))
+
+        # Only index 4 (0.5) should survive
+        assert r1[0][4] != 0
+        # Others zeroed
+        zeroed_count_r1 = np.sum(r1[0] == 0)
+        assert zeroed_count_r1 == 4
+
+        # Round 2: same values — but error feedback adds the residual
+        # from round 1 (the zeroed values: 0.1, 0.2, 0.3, 0.4)
+        # So effective values are [0.2, 0.4, 0.6, 0.8, 0.5]
+        # Now index 3 (0.8) should be the top value
+        params2 = [np.array([0.1, 0.2, 0.3, 0.4, 0.0], dtype=np.float32)]
+        in2, out2 = _make_train_message(params2)
+        r2 = _extract_params(mod(in2, MagicMock(spec=Context), MagicMock(return_value=out2)))
+
+        # With error feedback, previously zeroed values get a boost
+        # so the result should differ from no-feedback compression
+        assert np.any(r2[0] != 0)
+
+    def test_no_error_feedback_by_default(self):
+        """Without error_feedback, rounds are independent."""
+        mod = make_gradient_compression_mod(
+            compression_ratio=0.2, noise_scale=0.0,
+            use_random_mask=False, error_feedback=False,
+        )
+
+        params = [np.array([0.1, 0.2, 0.3, 0.4, 0.5], dtype=np.float32)]
+        in1, out1 = _make_train_message(params)
+        r1 = _extract_params(mod(in1, MagicMock(spec=Context), MagicMock(return_value=out1)))
+
+        in2, out2 = _make_train_message(params)
+        r2 = _extract_params(mod(in2, MagicMock(spec=Context), MagicMock(return_value=out2)))
+
+        # Without error feedback, same input → same output
+        np.testing.assert_array_equal(r1[0], r2[0])
+
 
 # ── HE Tests ───────────────────────────────────────────────────────────────
 

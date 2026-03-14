@@ -409,6 +409,7 @@ python jobs/esm2_runner.py --compress 0.1 --compress-noise 0.05
 | `--compress` | off | Compression ratio (fraction of params to keep, 0–1) |
 | `--compress-topk` | off | Use TopK selection (default: random mask) |
 | `--compress-noise` | 0.01 | Heuristic noise scale for masked values |
+| `--compress-error-feedback` | off | Accumulate compression residuals across rounds (FedSparQ-style) |
 
 When `epsilon` and `delta` are set via `GradientCompressionConfig`
 programmatically, noise is auto-calibrated via PLD instead of using

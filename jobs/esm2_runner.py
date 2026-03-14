@@ -148,6 +148,8 @@ Examples:
                         help="Noise scale for compressed gradients (default: 0.01)")
     parser.add_argument("--compress-topk", action="store_true",
                         help="Use deterministic TopK instead of random masking")
+    parser.add_argument("--compress-error-feedback", action="store_true",
+                        help="Enable error feedback: accumulate compression residuals across rounds")
 
     # Secure Aggregation
     parser.add_argument("--secagg", action="store_true",
@@ -301,6 +303,7 @@ def run_flower(args: argparse.Namespace, logger) -> int:
                 compression_ratio=args.compress,
                 noise_scale=args.compress_noise,
                 use_random_mask=not args.compress_topk,
+                error_feedback=args.compress_error_feedback,
             )
         )
     # Aggregation strategy
