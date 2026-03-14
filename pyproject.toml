@@ -40,6 +40,9 @@ esm2 = [
 he = [
     "tenseal>=0.3.14",
 ]
+dpsgd = [
+    "opacus>=1.5",
+]
 privacy = [
     "dp-accounting>=0.4.0",
 ]
