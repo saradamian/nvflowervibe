@@ -316,4 +316,15 @@ def client_fn(context: Context) -> Client:
         max_samples=max_samples,
     )
 
+    # Wrap with Opacus DP-SGD if configured
+    import os
+    if os.environ.get("SFL_DPSGD_ENABLED", "").lower() == "true":
+        from sfl.client.dp_client import DPSGDConfig, enable_dpsgd
+        dpsgd_cfg = DPSGDConfig(
+            max_grad_norm=float(os.environ.get("SFL_DPSGD_CLIP", "1.0")),
+            noise_multiplier=float(os.environ.get("SFL_DPSGD_NOISE", "1.0")),
+            target_delta=float(os.environ.get("SFL_DPSGD_DELTA", "1e-5")),
+        )
+        enable_dpsgd(client, dpsgd_cfg)
+
     return client.to_client()

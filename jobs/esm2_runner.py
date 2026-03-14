@@ -158,6 +158,16 @@ Examples:
     parser.add_argument("--trim-ratio", type=float, default=0.1,
                         help="Fraction to trim per side for trimmed-mean (default: 0.1)")
 
+    # Per-example DP-SGD (Opacus)
+    parser.add_argument("--dpsgd", action="store_true",
+                        help="Enable per-example DP-SGD via Opacus")
+    parser.add_argument("--dpsgd-clip", type=float, default=1.0,
+                        help="Per-example gradient clip norm (default: 1.0)")
+    parser.add_argument("--dpsgd-noise", type=float, default=1.0,
+                        help="Noise multiplier for DP-SGD (default: 1.0)")
+    parser.add_argument("--dpsgd-delta", type=float, default=1e-5,
+                        help="Delta for per-example DP accounting (default: 1e-5)")
+
     return parser.parse_args()
 
 
@@ -272,6 +282,13 @@ def run_flower(args: argparse.Namespace, logger) -> int:
         os.environ["SFL_KRUM_BYZANTINE"] = str(args.krum_byzantine)
     elif args.aggregation == "trimmed-mean":
         os.environ["SFL_TRIM_RATIO"] = str(args.trim_ratio)
+
+    # Per-example DP-SGD
+    if args.dpsgd:
+        os.environ["SFL_DPSGD_ENABLED"] = "true"
+        os.environ["SFL_DPSGD_CLIP"] = str(args.dpsgd_clip)
+        os.environ["SFL_DPSGD_NOISE"] = str(args.dpsgd_noise)
+        os.environ["SFL_DPSGD_DELTA"] = str(args.dpsgd_delta)
 
     if args.secagg:
         from flwr.client.mod import secaggplus_mod
