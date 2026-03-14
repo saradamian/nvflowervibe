@@ -315,27 +315,34 @@ class TestSVTPrivacyMod:
         assert _extract_params(result)[0].shape == (2,)
 
     def test_optimal_budget_less_noise_than_standard(self):
-        """Optimal budget split should produce less noise (more nonzeros) for same ε."""
-        np.random.seed(42)
-        params = [np.random.randn(200).astype(np.float32)]
-        in_msg, out_msg = _make_train_message(params)
+        """Optimal budget split should produce less noise (more nonzeros) for same ε.
 
-        np.random.seed(42)
-        mod_std = make_svt_privacy_mod(
-            fraction=0.5, epsilon=1.0, gamma=10.0, tau=0.0, optimal_budget=False,
-        )
-        r_std = _extract_params(mod_std(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg)))
+        Run multiple trials since DP noise is CSRNG-seeded and therefore
+        non-deterministic. The optimal split should win on average.
+        """
+        wins = 0
+        trials = 10
+        for _ in range(trials):
+            params = [np.random.randn(200).astype(np.float32)]
+            in_msg, out_msg = _make_train_message(params)
 
-        np.random.seed(42)
-        mod_opt = make_svt_privacy_mod(
-            fraction=0.5, epsilon=1.0, gamma=10.0, tau=0.0, optimal_budget=True,
-        )
-        r_opt = _extract_params(mod_opt(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg)))
+            mod_std = make_svt_privacy_mod(
+                fraction=0.5, epsilon=1.0, gamma=10.0, tau=0.0, optimal_budget=False,
+            )
+            r_std = _extract_params(mod_std(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg)))
 
-        # Optimal should select at least as many (usually more) params
-        nz_std = np.count_nonzero(r_std[0])
-        nz_opt = np.count_nonzero(r_opt[0])
-        assert nz_opt >= nz_std
+            mod_opt = make_svt_privacy_mod(
+                fraction=0.5, epsilon=1.0, gamma=10.0, tau=0.0, optimal_budget=True,
+            )
+            r_opt = _extract_params(mod_opt(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg)))
+
+            nz_std = np.count_nonzero(r_std[0])
+            nz_opt = np.count_nonzero(r_opt[0])
+            if nz_opt >= nz_std:
+                wins += 1
+
+        # Optimal should win in majority of trials
+        assert wins >= trials // 2, f"Optimal won only {wins}/{trials} trials"
 
     def test_prescreen_reduces_candidates(self):
         """Pre-screening should still produce valid output."""

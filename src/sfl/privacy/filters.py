@@ -43,6 +43,8 @@ from flwr.common.context import Context
 from flwr.common.logger import log
 from flwr.common.message import Message
 
+from sfl.utils.rng import secure_rng
+
 
 # ── PercentilePrivacy ───────────────────────────────────────────────────────
 
@@ -151,7 +153,8 @@ def make_percentile_privacy_mod(
             arr = np.clip(arr, -cfg.gamma, cfg.gamma)
             # Add Gaussian noise if configured
             if effective_noise_scale > 0:
-                noise = np.random.normal(0, effective_noise_scale * cfg.gamma, size=arr.shape)
+                _rng = secure_rng()
+                noise = _rng.normal(0, effective_noise_scale * cfg.gamma, size=arr.shape)
                 arr = np.clip(arr + noise, -cfg.gamma, cfg.gamma)
             filtered.append(arr)
 
@@ -273,7 +276,8 @@ def make_svt_privacy_mod(
             eps_2 = cfg.epsilon / (2.0 * c) if c > 0 else cfg.epsilon
 
         # Noisy threshold
-        threshold = cfg.tau + np.random.laplace(scale=cfg.gamma / eps_1)
+        _rng = secure_rng()
+        threshold = cfg.tau + _rng.laplace(scale=cfg.gamma / eps_1)
 
         # Per-query noise scale (same for selection and output)
         query_scale = cfg.gamma / eps_2
@@ -283,7 +287,7 @@ def make_svt_privacy_mod(
         # the one-shot SVT ε-DP proof (Dwork & Roth 2014, Theorem 3.25).
         clipped_w = np.abs(np.clip(delta_w, -cfg.gamma, cfg.gamma))
 
-        nu_i = np.random.laplace(scale=query_scale, size=candidate_idx.shape)
+        nu_i = _rng.laplace(scale=query_scale, size=candidate_idx.shape)
         above = (clipped_w[candidate_idx] + nu_i) >= threshold
         accepted = candidate_idx[above].tolist()
 
@@ -294,10 +298,10 @@ def make_svt_privacy_mod(
 
         # Sample exactly n_upload if we got more
         if len(accepted) > n_upload:
-            accepted = list(np.random.choice(accepted, size=n_upload, replace=False))
+            accepted = list(_rng.choice(accepted, size=n_upload, replace=False))
 
         # Add output noise calibrated to the same per-query budget
-        output_noise = np.random.laplace(scale=query_scale, size=len(accepted))
+        output_noise = _rng.laplace(scale=query_scale, size=len(accepted))
         delta_w_out = np.zeros_like(delta_w)
         accepted_arr = np.array(accepted, dtype=np.intp)
         delta_w_out[accepted_arr] = np.clip(
@@ -508,7 +512,7 @@ def make_gradient_compression_mod(
                 probs = abs_flat / total
             else:
                 probs = np.ones(n) / n
-            selected = np.random.choice(n, size=k, replace=False, p=probs)
+            selected = secure_rng().choice(n, size=k, replace=False, p=probs)
         else:
             # Deterministic TopK
             selected = np.argpartition(np.abs(flat), -k)[-k:]
@@ -521,13 +525,13 @@ def make_gradient_compression_mod(
         if k > 0:
             if cfg._calibrated_sigma is not None:
                 # Calibrated (ε,δ)-DP noise
-                out[selected] += np.random.normal(
+                out[selected] += secure_rng().normal(
                     scale=cfg._calibrated_sigma, size=k,
                 )
             elif cfg.noise_scale > 0:
                 l2 = np.linalg.norm(out[selected])
                 sigma = cfg.noise_scale * l2 / np.sqrt(k)
-                out[selected] += np.random.normal(scale=sigma, size=k)
+                out[selected] += secure_rng().normal(scale=sigma, size=k)
 
         log(INFO,
             "gradient_compression: kept %d/%d values (%.1f%%), random=%s",
