@@ -97,6 +97,20 @@ Examples:
                         choices=["server", "client"],
                         help="DP mode: server-side or client-side (default: server)")
 
+    # Privacy filters
+    parser.add_argument("--percentile-privacy", type=int, default=None, metavar="PCT",
+                        help="Enable percentile privacy: only share top PCT%% of diffs")
+    parser.add_argument("--percentile-gamma", type=float, default=0.01,
+                        help="Clipping bound for percentile privacy (default: 0.01)")
+    parser.add_argument("--svt-privacy", action="store_true",
+                        help="Enable SVT (Sparse Vector Technique) differential privacy")
+    parser.add_argument("--svt-epsilon", type=float, default=0.1,
+                        help="SVT privacy budget epsilon (default: 0.1)")
+    parser.add_argument("--svt-fraction", type=float, default=0.1,
+                        help="SVT fraction of params to upload (default: 0.1)")
+    parser.add_argument("--exclude-layers", type=str, default=None,
+                        help="Comma-separated parameter indices to exclude (e.g. '0,1')")
+
     return parser.parse_args()
 
 
@@ -157,10 +171,9 @@ def run_flower(args: argparse.Namespace, logger) -> int:
     client_app = ClientApp(client_fn=client_fn)
     server_app = ServerApp(server_fn=server_fn)
 
-    # If DP is enabled, reconfigure apps
+    # Build client mods for privacy
+    client_mods = []
     if args.dp:
-        # Pass DP config via run_config to server_fn
-        # Flower simulation injects run_config into context
         import os
         os.environ["SFL_DP_ENABLED"] = "true"
         os.environ["SFL_DP_NOISE"] = str(args.dp_noise)
@@ -169,7 +182,25 @@ def run_flower(args: argparse.Namespace, logger) -> int:
 
         if args.dp_mode == "client":
             from flwr.client.mod import fixedclipping_mod
-            client_app = ClientApp(client_fn=client_fn, mods=[fixedclipping_mod])
+            client_mods.append(fixedclipping_mod)
+
+    if args.percentile_privacy is not None:
+        from sfl.privacy.filters import make_percentile_privacy_mod
+        client_mods.append(
+            make_percentile_privacy_mod(args.percentile_privacy, args.percentile_gamma)
+        )
+    if args.svt_privacy:
+        from sfl.privacy.filters import make_svt_privacy_mod
+        client_mods.append(
+            make_svt_privacy_mod(fraction=args.svt_fraction, epsilon=args.svt_epsilon)
+        )
+    if args.exclude_layers:
+        from sfl.privacy.filters import make_exclude_vars_mod
+        indices = [int(x.strip()) for x in args.exclude_layers.split(",")]
+        client_mods.append(make_exclude_vars_mod(exclude_indices=indices))
+
+    if client_mods:
+        client_app = ClientApp(client_fn=client_fn, mods=client_mods)
 
     logger.info("Starting Flower simulation for ESM2 FL...")
 
@@ -313,6 +344,12 @@ def main() -> int:
     logger.info(f"Save dir:      {args.save_dir or 'none'}")
     logger.info(f"Backend:       {args.backend}")
     logger.info(f"DP:            {'ON ('+args.dp_mode+', noise='+str(args.dp_noise)+', clip='+str(args.dp_clip)+')' if args.dp else 'OFF'}")
+    if args.percentile_privacy is not None:
+        logger.info(f"Filter:        PercentilePrivacy (top {args.percentile_privacy}%, gamma={args.percentile_gamma})")
+    if args.svt_privacy:
+        logger.info(f"Filter:        SVTPrivacy (eps={args.svt_epsilon}, frac={args.svt_fraction})")
+    if args.exclude_layers:
+        logger.info(f"Excluded:      layers {args.exclude_layers}")
     logger.info("-" * 60)
 
     try:

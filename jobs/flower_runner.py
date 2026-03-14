@@ -80,6 +80,38 @@ def parse_args() -> argparse.Namespace:
         choices=["server", "client"],
         help="DP mode: server-side or client-side (default: server)",
     )
+
+    # Privacy filters
+    parser.add_argument(
+        "--percentile-privacy",
+        type=int,
+        default=None,
+        metavar="PCT",
+        help="Enable percentile privacy: only share top PCT%% of diffs (e.g. 10)",
+    )
+    parser.add_argument(
+        "--percentile-gamma",
+        type=float,
+        default=0.01,
+        help="Clipping bound for percentile privacy (default: 0.01)",
+    )
+    parser.add_argument(
+        "--svt-privacy",
+        action="store_true",
+        help="Enable SVT (Sparse Vector Technique) differential privacy",
+    )
+    parser.add_argument(
+        "--svt-epsilon",
+        type=float,
+        default=0.1,
+        help="SVT privacy budget epsilon (default: 0.1)",
+    )
+    parser.add_argument(
+        "--svt-fraction",
+        type=float,
+        default=0.1,
+        help="SVT fraction of params to upload (default: 0.1)",
+    )
     
     return parser.parse_args()
 
@@ -124,6 +156,10 @@ def main() -> int:
     logger.info(f"Clients: {config.federation.num_clients}")
     logger.info(f"Rounds: {config.federation.num_rounds}")
     logger.info(f"DP:      {'ON ('+args.dp_mode+', noise='+str(args.dp_noise)+', clip='+str(args.dp_clip)+')' if args.dp else 'OFF'}")
+    if args.percentile_privacy is not None:
+        logger.info(f"Filter:  PercentilePrivacy (top {args.percentile_privacy}%, gamma={args.percentile_gamma})")
+    if args.svt_privacy:
+        logger.info(f"Filter:  SVTPrivacy (eps={args.svt_epsilon}, frac={args.svt_fraction})")
     logger.info("-" * 60)
     
     # Import apps
@@ -134,10 +170,25 @@ def main() -> int:
     from flwr.client import ClientApp
     from flwr.server import ServerApp
     
-    client_app_kwargs = {"client_fn": client_fn}
+    # Build client mods list
+    client_mods = []
     if args.dp and args.dp_mode == "client":
         from flwr.client.mod import fixedclipping_mod
-        client_app_kwargs["mods"] = [fixedclipping_mod]
+        client_mods.append(fixedclipping_mod)
+    if args.percentile_privacy is not None:
+        from sfl.privacy.filters import make_percentile_privacy_mod
+        client_mods.append(
+            make_percentile_privacy_mod(args.percentile_privacy, args.percentile_gamma)
+        )
+    if args.svt_privacy:
+        from sfl.privacy.filters import make_svt_privacy_mod
+        client_mods.append(
+            make_svt_privacy_mod(fraction=args.svt_fraction, epsilon=args.svt_epsilon)
+        )
+
+    client_app_kwargs = {"client_fn": client_fn}
+    if client_mods:
+        client_app_kwargs["mods"] = client_mods
 
     client_app = ClientApp(**client_app_kwargs)
 

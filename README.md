@@ -47,6 +47,12 @@ sfl/
 │   │   ├── dataset.py          # Protein sequences, MLM masking, IID partitioning
 │   │   ├── client.py           # ESM2Client (extends BaseFederatedClient)
 │   │   └── server.py           # FedAvg seeded with pretrained ESM2 weights
+│   ├── privacy/
+│   │   ├── __init__.py         # Privacy module exports
+│   │   ├── dp.py               # Flower DP strategy wrappers
+│   │   ├── filters.py          # NVFlare-inspired privacy filters (Flower mods)
+│   │   ├── he.py               # Homomorphic encryption (TenSEAL CKKS)
+│   │   └── secagg.py           # SecAgg+ configuration
 │   └── utils/
 │       ├── config.py           # YAML + env + CLI config management
 │       └── logging.py          # Rich/simple/JSON logging
@@ -65,6 +71,10 @@ sfl/
 │   ├── test_esm2_dataset.py    # MLM masking, partitioning
 │   ├── test_esm2_client.py     # ESM2Client inheritance, training, evaluation
 │   └── test_esm2_server.py     # Server FedAvg setup, config overrides
+├── docs/
+│   ├── DEPLOYMENT.md           # Deployment guide (SimEnv → Production)
+│   ├── INSTALL_NOTE.md         # Installation & troubleshooting
+│   └── PRIVACY.md              # Privacy & security guide
 ├── scripts/
 │   ├── setup.sh                # Environment setup
 │   ├── run_simulation.sh       # Quick run script
@@ -117,7 +127,32 @@ python jobs/esm2_runner.py --backend nvflare --num-clients 2 --num-rounds 2
 
 GPU auto-detection: if CUDA GPUs are available, they are automatically allocated across simulation clients.
 
-### 4. Run Tests
+### 4. Privacy & Security
+
+SFL supports layered privacy: DP, NVFlare-inspired privacy filters,
+homomorphic encryption, and confidential computing.
+
+```bash
+# Differential privacy
+python jobs/esm2_runner.py --dp --dp-noise 0.1
+
+# Percentile privacy filter (only share top 10% of weight diffs)
+python jobs/esm2_runner.py --percentile-privacy 10
+
+# SVT differential privacy (formal ε-DP)
+python jobs/esm2_runner.py --svt-privacy --svt-epsilon 0.1
+
+# Exclude embedding layers from aggregation
+python jobs/esm2_runner.py --exclude-layers 0,1
+
+# Combine all layers
+python jobs/esm2_runner.py --dp --percentile-privacy 10 --exclude-layers 0,1
+```
+
+See [docs/PRIVACY.md](docs/PRIVACY.md) for the full privacy guide,
+including HE limitations, confidential computing, and trade-off analysis.
+
+### 5. Run Tests
 
 ```bash
 python -m pytest tests/ -v
