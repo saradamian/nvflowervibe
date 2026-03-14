@@ -202,6 +202,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Use deterministic TopK instead of random masking",
     )
+    parser.add_argument(
+        "--compress-error-feedback",
+        action="store_true",
+        help="Enable error feedback: accumulate compression residuals across rounds",
+    )
 
     # Secure Aggregation
     parser.add_argument(
@@ -348,6 +353,7 @@ def main() -> int:
                 compression_ratio=args.compress,
                 noise_scale=args.compress_noise,
                 use_random_mask=not args.compress_topk,
+                error_feedback=args.compress_error_feedback,
             )
         )
     if args.secagg:
