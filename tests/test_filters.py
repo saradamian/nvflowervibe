@@ -3,6 +3,7 @@ Tests for NVFlare-inspired privacy filters (Flower client mods)
 and homomorphic encryption support.
 """
 
+from logging import WARNING
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -141,6 +142,38 @@ class TestPercentilePrivacyMod:
         # call_next should be called directly (pass-through)
         call_next.assert_called_once()
 
+    def test_noise_scale_adds_noise(self):
+        """With noise_scale > 0, output should differ from deterministic clipping."""
+        np.random.seed(42)
+        params = [np.array([0.5, -0.5, 0.8, -0.8], dtype=np.float32)]
+        in_msg, out_msg = _make_train_message(params)
+
+        mod_no_noise = make_percentile_privacy_mod(percentile=0, gamma=1.0, noise_scale=0.0)
+        mod_with_noise = make_percentile_privacy_mod(percentile=0, gamma=1.0, noise_scale=0.5)
+
+        np.random.seed(42)
+        r1 = _extract_params(mod_no_noise(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg)))
+        np.random.seed(42)
+        r2 = _extract_params(mod_with_noise(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg)))
+
+        # With noise, outputs should not match the no-noise version
+        assert not np.allclose(r1[0], r2[0])
+
+    def test_noise_scale_zero_logs_warning(self):
+        """noise_scale=0 should log a privacy warning."""
+        params = [np.array([1.0], dtype=np.float32)]
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_percentile_privacy_mod(percentile=0, gamma=1.0, noise_scale=0.0)
+        call_next = MagicMock(return_value=out_msg)
+
+        with patch("sfl.privacy.filters.log") as mock_log:
+            mod(in_msg, MagicMock(spec=Context), call_next)
+            # Check that a WARNING was logged
+            warning_calls = [c for c in mock_log.call_args_list if c[0][0] == WARNING]
+            assert len(warning_calls) >= 1
+            assert "NO formal privacy" in str(warning_calls[0])
+
 
 # ── SVTPrivacy Tests ────────────────────────────────────────────────────────
 
@@ -195,6 +228,46 @@ class TestSVTPrivacyMod:
         nonzero_mask = result_params[0] != 0
         if nonzero_mask.any():
             assert np.all(np.abs(result_params[0][nonzero_mask]) <= gamma + 1e-6)
+
+    def test_iteration_cap_prevents_infinite_loop(self):
+        """With very low epsilon, SVT should hit the iteration cap and stop."""
+        params = [np.ones(50, dtype=np.float32) * 0.001]
+        in_msg, out_msg = _make_train_message(params)
+
+        # Very low epsilon → huge noise → hard to accept anything
+        mod = make_svt_privacy_mod(fraction=0.5, epsilon=1e-6, gamma=1e-5, tau=10.0)
+        call_next = MagicMock(return_value=out_msg)
+
+        # Should terminate (not hang) thanks to iteration cap
+        result = mod(in_msg, MagicMock(spec=Context), call_next)
+        result_params = _extract_params(result)
+        assert result_params[0].shape == (50,)
+
+    def test_high_epsilon_accepts_most(self):
+        """With very high epsilon (low noise), nearly all params are accepted."""
+        np.random.seed(42)
+        params = [np.random.randn(100).astype(np.float32)]
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_svt_privacy_mod(fraction=0.9, epsilon=1000.0, gamma=10.0, tau=0.0)
+        call_next = MagicMock(return_value=out_msg)
+
+        result = mod(in_msg, MagicMock(spec=Context), call_next)
+        result_params = _extract_params(result)
+
+        nonzero = np.count_nonzero(result_params[0])
+        assert nonzero >= 80  # most should be accepted
+
+    def test_noise_var_kwarg_ignored(self):
+        """Legacy noise_var kwarg should be accepted but ignored."""
+        params = [np.array([1.0, 2.0], dtype=np.float32)]
+        in_msg, out_msg = _make_train_message(params)
+
+        # Should not raise, noise_var is caught by **_kwargs
+        mod = make_svt_privacy_mod(fraction=0.5, noise_var=0.5)
+        call_next = MagicMock(return_value=out_msg)
+        result = mod(in_msg, MagicMock(spec=Context), call_next)
+        assert _extract_params(result)[0].shape == (2,)
 
 
 # ── ExcludeVars Tests ───────────────────────────────────────────────────────

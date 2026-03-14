@@ -31,7 +31,7 @@ Usage:
 """
 
 from dataclasses import dataclass
-from logging import INFO
+from logging import INFO, WARNING
 from typing import Callable, List, Optional
 
 import numpy as np
@@ -54,14 +54,19 @@ class PercentilePrivacyConfig:
     Args:
         percentile: Only abs diffs above this percentile are kept (0–100).
         gamma: Upper limit to clip abs values of weight diffs.
+        noise_scale: Gaussian noise std as a multiple of gamma.
+            0 = no noise (legacy, NOT private). >0 adds calibrated
+            noise after clipping for actual privacy.
     """
     percentile: int = 10
     gamma: float = 0.01
+    noise_scale: float = 0.0
 
 
 def make_percentile_privacy_mod(
     percentile: int = 10,
     gamma: float = 0.01,
+    noise_scale: float = 0.0,
 ) -> Callable[[Message, Context, ClientAppCallable], Message]:
     """Create a Flower client mod that applies percentile privacy.
 
@@ -69,13 +74,18 @@ def make_percentile_privacy_mod(
     are shared; smaller diffs are zeroed. Remaining values are clipped
     to [-gamma, gamma].
 
+    With ``noise_scale > 0``, Gaussian noise (std = noise_scale * gamma)
+    is added after clipping, providing actual privacy. Without noise,
+    this is a bandwidth optimization only — NOT a privacy mechanism.
+
     Algorithm (Shokri & Shmatikov, CCS '15):
     1. Flatten all parameter diffs into a single vector
     2. Compute the ``percentile``-th percentile of |diffs|
     3. Zero out all diffs below the cutoff
     4. Clip remaining diffs to [-gamma, gamma]
+    5. (Optional) Add Gaussian noise, re-clip
     """
-    cfg = PercentilePrivacyConfig(percentile=percentile, gamma=gamma)
+    cfg = PercentilePrivacyConfig(percentile=percentile, gamma=gamma, noise_scale=noise_scale)
 
     def percentile_privacy_mod(
         msg: Message, ctxt: Context, call_next: ClientAppCallable,
@@ -105,9 +115,20 @@ def make_percentile_privacy_mod(
             arr[mask] = 0.0
             # Clip remaining to gamma
             arr = np.clip(arr, -cfg.gamma, cfg.gamma)
+            # Add Gaussian noise if configured
+            if cfg.noise_scale > 0:
+                noise = np.random.normal(0, cfg.noise_scale * cfg.gamma, size=arr.shape)
+                arr = np.clip(arr + noise, -cfg.gamma, cfg.gamma)
             filtered.append(arr)
 
-        log(INFO, "percentile_privacy_mod: cutoff=%.6f, percentile=%d", cutoff, cfg.percentile)
+        if cfg.noise_scale == 0:
+            log(WARNING,
+                "PercentilePrivacy with noise_scale=0 provides NO formal privacy "
+                "guarantee. It reduces bandwidth but does NOT prevent gradient "
+                "inversion attacks. Use --percentile-noise > 0 or --svt-privacy.")
+
+        log(INFO, "percentile_privacy_mod: cutoff=%.6f, percentile=%d, noise=%.4f",
+            cutoff, cfg.percentile, cfg.noise_scale)
 
         fit_res.parameters = ndarrays_to_parameters(filtered)
         out_msg.content = compat.fitres_to_recorddict(fit_res, keep_input=True)
@@ -126,39 +147,48 @@ class SVTPrivacyConfig:
     Args:
         fraction: Fraction of parameters to upload (0–1).
         epsilon: Privacy budget. Lower = more private, noisier.
-        noise_var: Scale for additive Laplace noise on accepted values.
-        gamma: Clipping bound for parameter values.
+        gamma: Clipping bound (L1 sensitivity) for parameter values.
         tau: Base threshold for SVT selection.
     """
     fraction: float = 0.1
     epsilon: float = 0.1
-    noise_var: float = 0.1
     gamma: float = 1e-5
     tau: float = 1e-6
+
+
+_SVT_MAX_ITERATIONS = 100
 
 
 def make_svt_privacy_mod(
     fraction: float = 0.1,
     epsilon: float = 0.1,
-    noise_var: float = 0.1,
     gamma: float = 1e-5,
     tau: float = 1e-6,
+    **_kwargs,
 ) -> Callable[[Message, Context, ClientAppCallable], Message]:
     """Create a Flower client mod that applies SVT differential privacy.
 
-    Sparse Vector Technique: selects a fraction of parameter values
-    using a noisy threshold, adds Laplace noise to accepted values,
-    and zeros the rest. Provides formal ε-differential privacy.
+    Canonical Sparse Vector Technique (Dwork & Roth 2014, Theorem 3.25):
+    selects a fraction of parameter values using a noisy threshold,
+    adds calibrated Laplace noise to accepted values, and zeros the rest.
+
+    Total privacy cost: ε (split as ε/2 for threshold + ε/(2c) per
+    query × c queries, where c = n_upload).
+
+    Reference:
+        Dwork & Roth, "The Algorithmic Foundations of Differential
+        Privacy" (2014), Section 3.6 (Sparse Vector Technique).
 
     Algorithm:
-    1. Flatten all params, compute upload budget = fraction * total_params
-    2. Set noisy threshold = tau + Laplace(scale=gamma*2/ε)
-    3. For each candidate: accept if |value| + Laplace(noise) >= threshold
-    4. Add Laplace noise to accepted values, clip to [-gamma, gamma]
-    5. Zero all non-accepted values
+    1. Flatten all params, compute upload budget c = fraction * total_params
+    2. Split budget: ε₁ = ε/2 for threshold, ε₂ = ε/(2c) per query
+    3. Noisy threshold = tau + Laplace(scale = gamma / ε₁)
+    4. For each candidate: accept if |value| + Laplace(scale = gamma / ε₂) >= threshold
+    5. Add output noise Laplace(scale = gamma / ε₂), clip to [-gamma, gamma]
+    6. Zero all non-accepted values
     """
     cfg = SVTPrivacyConfig(
-        fraction=fraction, epsilon=epsilon, noise_var=noise_var,
+        fraction=fraction, epsilon=epsilon,
         gamma=gamma, tau=tau,
     )
 
@@ -180,37 +210,43 @@ def make_svt_privacy_mod(
         n_total = delta_w.size
         n_upload = int(min(np.ceil(n_total * cfg.fraction), n_total))
 
-        # SVT: noisy threshold
-        lambda_rho = cfg.gamma * 2.0 / cfg.epsilon
-        threshold = cfg.tau + np.random.laplace(scale=lambda_rho)
+        # Canonical SVT budget split (Dwork & Roth, Theorem 3.25)
+        eps_1 = cfg.epsilon / 2.0               # threshold noise budget
+        eps_2 = cfg.epsilon / (2.0 * n_upload)   # per-query noise budget
 
-        # Per-query noise scale
-        eps_2 = cfg.epsilon * (2.0 * n_upload) ** (2.0 / 3.0)
-        lambda_nu = cfg.gamma * 4.0 * n_upload / eps_2
+        # Noisy threshold
+        threshold = cfg.tau + np.random.laplace(scale=cfg.gamma / eps_1)
+
+        # Per-query noise scale (same for selection and output)
+        query_scale = cfg.gamma / eps_2
 
         # Select values above noisy threshold
         clipped_w = np.abs(np.clip(delta_w, -cfg.gamma, cfg.gamma))
         candidate_idx = np.arange(n_total)
         accepted: list = []
 
-        while len(accepted) < n_upload and candidate_idx.size > 0:
-            nu_i = np.random.laplace(scale=lambda_nu, size=candidate_idx.shape)
+        iteration = 0
+        while len(accepted) < n_upload and candidate_idx.size > 0 and iteration < _SVT_MAX_ITERATIONS:
+            iteration += 1
+            nu_i = np.random.laplace(scale=query_scale, size=candidate_idx.shape)
             above = (clipped_w[candidate_idx] + nu_i) >= threshold
             accepted.extend(candidate_idx[above].tolist())
             candidate_idx = candidate_idx[~above]
+
+        if iteration >= _SVT_MAX_ITERATIONS:
+            log(WARNING, "SVT: hit iteration cap (%d), selected only %d/%d",
+                _SVT_MAX_ITERATIONS, len(accepted), n_upload)
 
         # Sample exactly n_upload if we got more
         if len(accepted) > n_upload:
             accepted = list(np.random.choice(accepted, size=n_upload, replace=False))
 
-        # Add noise to accepted values
-        noise = np.random.laplace(
-            scale=cfg.gamma * 2.0 / cfg.noise_var, size=len(accepted),
-        )
+        # Add output noise calibrated to the same per-query budget
+        output_noise = np.random.laplace(scale=query_scale, size=len(accepted))
         delta_w_out = np.zeros_like(delta_w)
         accepted_arr = np.array(accepted, dtype=np.intp)
         delta_w_out[accepted_arr] = np.clip(
-            delta_w[accepted_arr] + noise, -cfg.gamma, cfg.gamma,
+            delta_w[accepted_arr] + output_noise, -cfg.gamma, cfg.gamma,
         )
 
         log(
@@ -283,11 +319,11 @@ def make_exclude_vars_mod(
             else:
                 filtered.append(p)
 
-        log(
-            INFO,
-            "exclude_vars_mod: zeroed %d/%d parameter arrays",
-            n_excluded, len(params),
-        )
+        log(WARNING,
+            "ExcludeVars zeroed %d/%d layers but does NOT guarantee those "
+            "layers' information won't leak through other shared layers. "
+            "Combine with DP for formal guarantees.",
+            n_excluded, len(params))
 
         fit_res.parameters = ndarrays_to_parameters(filtered)
         out_msg.content = compat.fitres_to_recorddict(fit_res, keep_input=True)
