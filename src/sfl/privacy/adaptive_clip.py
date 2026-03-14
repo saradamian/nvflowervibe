@@ -171,3 +171,69 @@ class AdaptiveClipWrapper(Strategy):
             self.strategy.clipping_norm = new_clip
 
         return result
+
+
+# ── Per-Layer Adaptive Clipping ──────────────────────────────────────────────
+
+
+def make_per_layer_clip_mod(
+    clip_norms: Optional[Dict[int, float]] = None,
+    default_clip: float = 1.0,
+) -> "Callable":
+    """Create a Flower client mod that clips each parameter layer independently.
+
+    For transformers like ESM2, embedding/head layers have much larger
+    norms than attention layers. A single global clip wastes budget on
+    small layers and under-clips large layers. Per-layer clipping
+    (Yu et al., ICLR 2022; De et al., 2022) significantly improves
+    utility by applying separate L2 clips to each parameter tensor.
+
+    The total update is the concatenation of per-layer clipped tensors,
+    so the overall L2 sensitivity is sqrt(sum of clip_i^2).
+
+    Args:
+        clip_norms: Dict mapping parameter index → L2 clip norm.
+            If None, all layers use ``default_clip``.
+        default_clip: Default per-layer clip for layers not in ``clip_norms``.
+
+    Returns:
+        A Flower client mod (callable).
+    """
+    from flwr.client.typing import ClientAppCallable
+    from flwr.common import (
+        ndarrays_to_parameters,
+        parameters_to_ndarrays,
+    )
+    from flwr.common import recorddict_compat as compat
+    from flwr.common.constant import MessageType
+    from flwr.common.context import Context
+    from flwr.common.message import Message
+
+    _clip_norms = clip_norms or {}
+
+    def per_layer_clip_mod(
+        msg: Message, ctxt: Context, call_next: ClientAppCallable,
+    ) -> Message:
+        if msg.metadata.message_type != MessageType.TRAIN:
+            return call_next(msg, ctxt)
+
+        out_msg = call_next(msg, ctxt)
+        if out_msg.has_error():
+            return out_msg
+
+        fit_res = compat.recorddict_to_fitres(out_msg.content, keep_input=True)
+        params = parameters_to_ndarrays(fit_res.parameters)
+
+        clipped = []
+        for i, p in enumerate(params):
+            clip = _clip_norms.get(i, default_clip)
+            norm = float(np.linalg.norm(p))
+            if norm > clip:
+                p = p * (clip / norm)
+            clipped.append(p)
+
+        fit_res.parameters = ndarrays_to_parameters(clipped)
+        out_msg.content = compat.fitres_to_recorddict(fit_res, keep_input=True)
+        return out_msg
+
+    return per_layer_clip_mod

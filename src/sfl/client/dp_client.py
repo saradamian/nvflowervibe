@@ -86,6 +86,31 @@ def enable_dpsgd(client, config: DPSGDConfig):
                 total_batches += 1
 
         self._dpsgd_epsilon = privacy_engine.get_epsilon(config.target_delta)
+
+        # Optionally compute tighter ε via PLD accountant (S5).
+        # Opacus uses RDP→(ε,δ) conversion, which can be 2-5× looser than
+        # PLD-based accounting for the same Gaussian mechanism.
+        try:
+            from sfl.privacy.accountant import PrivacyAccountant
+            pld_acc = PrivacyAccountant(
+                noise_multiplier=config.noise_multiplier,
+                sample_rate=1.0,  # DP-SGD processes full local dataset
+                delta=config.target_delta,
+                enforce_budget=False,
+            )
+            # Step once per local epoch × batches
+            for _ in range(total_batches):
+                pld_acc.step()
+            pld_eps = pld_acc.epsilon
+            if pld_eps < self._dpsgd_epsilon:
+                logger.info(
+                    "Client %d: PLD accounting ε=%.4f (tighter than Opacus RDP ε=%.4f)",
+                    self.client_id, pld_eps, self._dpsgd_epsilon,
+                )
+                self._dpsgd_epsilon = pld_eps
+        except ImportError:
+            pass  # dp-accounting not installed, use Opacus RDP
+
         logger.info(
             "Client %d: DP-SGD ε=%.4f (δ=%g, σ=%.2f, C=%.2f)",
             self.client_id, self._dpsgd_epsilon,

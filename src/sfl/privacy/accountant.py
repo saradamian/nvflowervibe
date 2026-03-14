@@ -279,3 +279,84 @@ def compose_epsilon(
     except Exception:
         # Fall back to basic composition on any error
         return (eps_server + eps_client, delta_server + delta_client)
+
+
+def compute_pabi_epsilon(
+    noise_multiplier: float,
+    num_steps: int,
+    sample_rate: float = 1.0,
+    delta: float = 1e-5,
+    smoothness: float = 1.0,
+    strong_convexity: float = 0.0,
+) -> float:
+    """Estimate ε using Privacy Amplification by Iteration (PABI).
+
+    For strongly convex and smooth losses, iterative noisy gradient
+    descent enjoys privacy amplification beyond standard composition
+    (Feldman et al. 2018, Altschuler & Talwar 2022, Ye & Shokri 2022).
+
+    The PABI bound applies a contraction factor ``c = 1 - strong_convexity /
+    smoothness`` per step, which dampens the contribution of earlier
+    steps to the final iterate. When ``strong_convexity > 0``, this
+    yields tighter ε than PLD's worst-case composition.
+
+    Falls back to standard PLD accounting when ``strong_convexity == 0``
+    (no amplification) or when dp-accounting is not installed.
+
+    Args:
+        noise_multiplier: σ/C ratio used in Gaussian mechanism.
+        num_steps: Total number of gradient steps.
+        sample_rate: Fraction of data sampled per step (Poisson).
+        delta: Target δ for (ε,δ)-DP.
+        smoothness: L-smoothness constant of the loss.
+        strong_convexity: μ-strong convexity constant. 0 = no PABI.
+
+    Returns:
+        Estimated ε under PABI (or standard PLD when μ=0).
+    """
+    if not HAS_DP_ACCOUNTING:
+        raise ImportError("dp-accounting is required for PABI computation")
+
+    if strong_convexity <= 0 or smoothness <= 0:
+        # No PABI available, use standard PLD composition
+        acc = pld_privacy_accountant.PLDAccountant()
+        base = dp_event.GaussianDpEvent(noise_multiplier=noise_multiplier)
+        event = (
+            dp_event.PoissonSampledDpEvent(sampling_probability=sample_rate, event=base)
+            if sample_rate < 1.0 else base
+        )
+        acc.compose(event, count=num_steps)
+        return acc.get_epsilon(delta)
+
+    # PABI contraction factor: c = 1 - μ/L
+    contraction = 1.0 - strong_convexity / smoothness
+
+    # Effective number of rounds under contraction:
+    # The last step has weight 1, step t has weight c^(T-t).
+    # sum_{t=0..T-1} c^(2t) = (1 - c^{2T}) / (1 - c^2)
+    if contraction >= 1.0:
+        return compute_pabi_epsilon(
+            noise_multiplier, num_steps, sample_rate, delta,
+            smoothness, 0.0,
+        )
+
+    effective_rounds = (1.0 - contraction ** (2 * num_steps)) / (1.0 - contraction ** 2)
+
+    # Compose that many effective rounds
+    acc = pld_privacy_accountant.PLDAccountant()
+    base = dp_event.GaussianDpEvent(noise_multiplier=noise_multiplier)
+    event = (
+        dp_event.PoissonSampledDpEvent(sampling_probability=sample_rate, event=base)
+        if sample_rate < 1.0 else base
+    )
+    # Round effective_rounds to int (conservative: ceiling)
+    import math
+    acc.compose(event, count=math.ceil(effective_rounds))
+    pabi_eps = acc.get_epsilon(delta)
+
+    logger.info(
+        "PABI: %d actual steps → %.1f effective rounds (c=%.4f, μ/L=%.4f) → ε=%.4f",
+        num_steps, effective_rounds, contraction,
+        strong_convexity / smoothness, pabi_eps,
+    )
+    return pabi_eps

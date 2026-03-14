@@ -8,6 +8,12 @@ Multi-Krum (Blanchard et al., NeurIPS 2017):
 Trimmed Mean (Yin et al., ICML 2018):
     Coordinate-wise trimmed mean — removes the top and bottom β fraction
     of values at each coordinate before averaging.
+
+Spectral Filter (Tran et al., NeurIPS 2023):
+    Principal-component outlier detection — projects flattened updates
+    onto their top principal component and removes updates whose score
+    exceeds μ ± τ·σ.  More resistant to sophisticated model-poisoning
+    attacks that can fool Krum/TrimmedMean.
 """
 
 from typing import Dict, List, Optional, Tuple, Union
@@ -204,3 +210,104 @@ class TrimmedMeanFedAvg(FedAvg):
             metrics_aggregated = self.fit_metrics_aggregation_fn(fit_metrics)
 
         return parameters, metrics_aggregated
+
+
+class SpectralFilterFedAvg(FedAvg):
+    """FedAvg with spectral outlier detection.
+
+    Projects flattened client updates onto their top principal component
+    and flags updates whose projection score deviates by more than
+    ``threshold_sigma`` standard deviations from the mean.
+    Flagged updates are removed before averaging.
+
+    More resistant to sophisticated model-poisoning attacks (e.g.
+    inner-product manipulation) that can evade Krum or TrimmedMean
+    (Shejwalkar & Houmansadr, USENIX 2021).
+
+    Reference:
+        Tran et al., "Robust Aggregation via Spectral Filtering",
+        NeurIPS 2023.
+
+    Args:
+        threshold_sigma: Number of std deviations beyond which a
+            client's spectral score is considered an outlier.
+        project_dim: If the flattened update dimension exceeds this,
+            apply JL random projection first (for speed).
+        **kwargs: Passed to FedAvg.
+    """
+
+    def __init__(
+        self,
+        threshold_sigma: float = 2.0,
+        project_dim: int = 1000,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.threshold_sigma = threshold_sigma
+        self.project_dim = project_dim
+
+    def aggregate_fit(
+        self,
+        server_round: int,
+        results: List[Tuple[ClientProxy, FitRes]],
+        failures: List[Union[Tuple[ClientProxy, FitRes], BaseException]],
+    ) -> Tuple[Optional[Parameters], Dict[str, Scalar]]:
+        if not results:
+            return None, {}
+        if not self.accept_failures and failures:
+            return None, {}
+
+        n = len(results)
+        if n < 3:
+            return super().aggregate_fit(server_round, results, failures)
+
+        # Flatten each client update
+        updates = []
+        for _, res in results:
+            flat = np.concatenate(
+                [p.ravel() for p in parameters_to_ndarrays(res.parameters)]
+            )
+            updates.append(flat)
+        stacked = np.stack(updates)  # (n, d)
+
+        # Optional dimensionality reduction
+        d = stacked.shape[1]
+        if d > self.project_dim:
+            rng = np.random.RandomState(42)
+            proj = rng.normal(
+                scale=1.0 / np.sqrt(self.project_dim),
+                size=(d, self.project_dim),
+            ).astype(np.float32)
+            stacked = stacked.astype(np.float32) @ proj
+
+        # Center and compute top singular vector
+        mean = stacked.mean(axis=0)
+        centered = stacked - mean
+        # Power iteration for top singular vector (cheaper than full SVD)
+        v = np.random.RandomState(0).randn(centered.shape[1]).astype(centered.dtype)
+        for _ in range(10):
+            v = centered.T @ (centered @ v)
+            v = v / (np.linalg.norm(v) + 1e-12)
+
+        # Spectral scores: projection onto top component
+        scores = centered @ v
+        mu = scores.mean()
+        sigma = scores.std() + 1e-12
+
+        # Flag outliers
+        keep = np.abs(scores - mu) <= self.threshold_sigma * sigma
+        selected_idx = np.where(keep)[0]
+
+        if len(selected_idx) < 1:
+            # Fallback: keep all if filter is too aggressive
+            selected_idx = np.arange(n)
+
+        removed = n - len(selected_idx)
+        logger.info(
+            "[spectral-filter] round=%d removed %d/%d clients "
+            "(threshold=%.1fσ, score_std=%.4f)",
+            server_round, removed, n, self.threshold_sigma, sigma,
+        )
+
+        filtered_results = [results[i] for i in selected_idx]
+        return super().aggregate_fit(server_round, filtered_results, [])

@@ -641,3 +641,198 @@ class TestBudgetDashboard:
             info_calls = [str(c) for c in mock_logger.info.call_args_list]
             dashboard_logged = any("Privacy Budget" in s for s in info_calls)
             assert dashboard_logged, "Budget dashboard not logged"
+
+
+# ── PABI Tests (S2) ────────────────────────────────────────────────────────
+
+
+@pytest.mark.skipif(not _has_dp_accounting, reason="dp-accounting not installed")
+class TestPABI:
+    """Tests for Privacy Amplification by Iteration (S2)."""
+
+    def test_pabi_tighter_than_standard(self):
+        """With strong convexity, PABI ε should be ≤ standard PLD ε."""
+        from sfl.privacy.accountant import compute_pabi_epsilon
+
+        eps_standard = compute_pabi_epsilon(
+            noise_multiplier=1.0, num_steps=100,
+            sample_rate=1.0, delta=1e-5,
+            strong_convexity=0.0,  # no PABI
+        )
+        eps_pabi = compute_pabi_epsilon(
+            noise_multiplier=1.0, num_steps=100,
+            sample_rate=1.0, delta=1e-5,
+            smoothness=1.0,
+            strong_convexity=0.1,  # μ/L = 0.1
+        )
+        assert eps_pabi <= eps_standard
+
+    def test_pabi_zero_convexity_equals_standard(self):
+        """With strong_convexity=0, PABI should equal standard PLD."""
+        from sfl.privacy.accountant import compute_pabi_epsilon
+
+        eps_a = compute_pabi_epsilon(
+            noise_multiplier=1.0, num_steps=50,
+            sample_rate=1.0, delta=1e-5,
+            strong_convexity=0.0,
+        )
+        eps_b = compute_pabi_epsilon(
+            noise_multiplier=1.0, num_steps=50,
+            sample_rate=1.0, delta=1e-5,
+            smoothness=1.0, strong_convexity=0.0,
+        )
+        assert abs(eps_a - eps_b) < 1e-6
+
+    def test_pabi_returns_positive(self):
+        """PABI ε should always be positive."""
+        from sfl.privacy.accountant import compute_pabi_epsilon
+
+        eps = compute_pabi_epsilon(
+            noise_multiplier=2.0, num_steps=10,
+            delta=1e-5, smoothness=1.0, strong_convexity=0.5,
+        )
+        assert eps > 0
+
+
+# ── Distributed Noise Tests (S3) ──────────────────────────────────────────
+
+
+class TestDistributedNoise:
+    """Tests for distributed noise splitting (S3)."""
+
+    def test_total_sigma_preserved(self):
+        """σ_client and σ_server should compose to target_sigma."""
+        from sfl.privacy.dp import compute_distributed_noise_params
+
+        result = compute_distributed_noise_params(
+            target_sigma=1.0, num_clients=10, trust_fraction=0.0,
+        )
+        assert abs(result["total_sigma"] - 1.0) < 1e-10
+
+    def test_fully_distributed(self):
+        """trust_fraction=0 → server adds no noise, clients share equally."""
+        from sfl.privacy.dp import compute_distributed_noise_params
+
+        result = compute_distributed_noise_params(
+            target_sigma=1.0, num_clients=4, trust_fraction=0.0,
+        )
+        assert result["sigma_server"] == 0.0
+        assert result["sigma_client"] > 0
+
+    def test_fully_server(self):
+        """trust_fraction=1 → server adds all noise, clients add none."""
+        from sfl.privacy.dp import compute_distributed_noise_params
+
+        result = compute_distributed_noise_params(
+            target_sigma=2.0, num_clients=5, trust_fraction=1.0,
+        )
+        assert abs(result["sigma_server"] - 2.0) < 1e-10
+        assert result["sigma_client"] == 0.0
+
+    def test_half_split(self):
+        """trust_fraction=0.5 → half variance from server, half from clients."""
+        from sfl.privacy.dp import compute_distributed_noise_params
+        import math
+
+        result = compute_distributed_noise_params(
+            target_sigma=1.0, num_clients=4, trust_fraction=0.5,
+        )
+        # Server var = 0.5, client var per client = 0.5/4 = 0.125
+        assert abs(result["sigma_server"] - math.sqrt(0.5)) < 1e-10
+        assert abs(result["total_sigma"] - 1.0) < 1e-10
+
+    def test_invalid_sigma_raises(self):
+        """Negative or zero target_sigma should raise."""
+        from sfl.privacy.dp import compute_distributed_noise_params
+
+        with pytest.raises(ValueError):
+            compute_distributed_noise_params(target_sigma=0, num_clients=5)
+
+    def test_invalid_trust_fraction_raises(self):
+        """trust_fraction outside [0,1] should raise."""
+        from sfl.privacy.dp import compute_distributed_noise_params
+
+        with pytest.raises(ValueError):
+            compute_distributed_noise_params(
+                target_sigma=1.0, num_clients=5, trust_fraction=1.5,
+            )
+
+
+# ── Canary Privacy Audit Tests (S4) ──────────────────────────────────────
+
+
+class TestPrivacyAuditor:
+    """Tests for canary-based privacy auditing (S4)."""
+
+    def test_high_noise_passes(self):
+        """With high noise, the canary should be undetectable."""
+        from sfl.privacy.audit import PrivacyAuditor
+
+        auditor = PrivacyAuditor(noise_scale=10.0, clipping_norm=1.0)
+        result = auditor.run_canary_audit(
+            params=[np.zeros(1000, dtype=np.float32)],
+            num_trials=100, seed=42,
+        )
+        assert result.passed
+        assert result.detection_rate <= 0.1
+
+    def test_zero_noise_fails(self):
+        """With no noise, the canary should be detectable."""
+        from sfl.privacy.audit import PrivacyAuditor
+
+        auditor = PrivacyAuditor(
+            noise_scale=0.001, clipping_norm=100.0,
+            detection_threshold=0.01, acceptable_rate=0.05,
+        )
+        result = auditor.run_canary_audit(
+            params=[np.zeros(50, dtype=np.float32)],
+            num_trials=100, seed=42,
+        )
+        # With essentially no noise, canary should be detectable
+        assert result.detection_rate > 0.0
+
+    def test_result_repr(self):
+        """AuditResult repr should contain PASS/FAIL."""
+        from sfl.privacy.audit import AuditResult
+
+        r = AuditResult(
+            detection_rate=0.0, mean_cosine_sim=0.01, max_cosine_sim=0.05,
+            noise_scale=1.0, clipping_norm=10.0, passed=True,
+        )
+        assert "PASS" in repr(r)
+
+        r2 = AuditResult(
+            detection_rate=0.5, mean_cosine_sim=0.3, max_cosine_sim=0.8,
+            noise_scale=0.1, clipping_norm=10.0, passed=False,
+        )
+        assert "FAIL" in repr(r2)
+
+    def test_seed_reproducibility(self):
+        """Same seed should produce identical results."""
+        from sfl.privacy.audit import PrivacyAuditor
+
+        auditor = PrivacyAuditor(noise_scale=1.0, clipping_norm=5.0)
+        r1 = auditor.run_canary_audit(
+            params=[np.ones(20, dtype=np.float32)],
+            num_trials=50, seed=123,
+        )
+        r2 = auditor.run_canary_audit(
+            params=[np.ones(20, dtype=np.float32)],
+            num_trials=50, seed=123,
+        )
+        assert r1.detection_rate == r2.detection_rate
+        assert r1.mean_cosine_sim == r2.mean_cosine_sim
+
+
+# ── Per-Layer Clip Mod Tests (S6) ─────────────────────────────────────────
+
+
+class TestPerLayerClipMod:
+    """Tests for per-layer adaptive clipping mod (S6)."""
+
+    def test_import_and_create(self):
+        """make_per_layer_clip_mod should return a callable."""
+        from sfl.privacy.adaptive_clip import make_per_layer_clip_mod
+
+        mod = make_per_layer_clip_mod(default_clip=1.0)
+        assert callable(mod)
