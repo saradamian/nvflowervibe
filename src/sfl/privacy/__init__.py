@@ -33,7 +33,11 @@ from sfl.privacy.secagg import build_secagg_config, make_secagg_main, SecAggConf
 
 # Optional: privacy accounting (requires dp-accounting)
 try:
-    from sfl.privacy.accountant import PrivacyAccountant, AccountingConfig
+    from sfl.privacy.accountant import (
+        PrivacyAccountant,
+        AccountingConfig,
+        BudgetExhaustedError,
+    )
 except ImportError:
     pass
 
@@ -60,6 +64,7 @@ __all__ = [
     "GradientCompressionConfig",
     "PrivacyAccountant",
     "AccountingConfig",
+    "BudgetExhaustedError",
     "HEContext",
     "HEConfig",
 ]

@@ -21,9 +21,24 @@ from flwr.server.strategy import (
     DifferentialPrivacyServerSideFixedClipping,
 )
 
-from sfl.privacy.dp import DPConfig, wrap_strategy_with_dp
+from sfl.privacy.dp import DPConfig, wrap_strategy_with_dp, _AccountingWrapper
 from sfl.privacy.secagg import SecAggConfig, build_secagg_config, make_secagg_main
 from sfl.server.strategy import SumFedAvg
+
+try:
+    from dp_accounting.pld.privacy_loss_distribution import from_gaussian_mechanism
+    _has_dp_accounting = True
+except ImportError:
+    _has_dp_accounting = False
+
+
+def _assert_dp_wrapped(wrapped, expected_inner_type):
+    """Assert DP wrapping — with or without dp-accounting."""
+    if _has_dp_accounting:
+        assert isinstance(wrapped, _AccountingWrapper)
+        assert isinstance(wrapped._inner, expected_inner_type)
+    else:
+        assert isinstance(wrapped, expected_inner_type)
 
 
 # ── DPConfig ────────────────────────────────────────────────────────────────
@@ -50,13 +65,13 @@ class TestWrapStrategyWithDP:
         strategy = self._make_fedavg()
         dp_config = DPConfig(mode="server", noise_multiplier=0.5, clipping_norm=1.0)
         wrapped = wrap_strategy_with_dp(strategy, dp_config)
-        assert isinstance(wrapped, DifferentialPrivacyServerSideFixedClipping)
+        _assert_dp_wrapped(wrapped, DifferentialPrivacyServerSideFixedClipping)
 
     def test_client_side_wrapping(self):
         strategy = self._make_fedavg()
         dp_config = DPConfig(mode="client", noise_multiplier=0.5, clipping_norm=1.0)
         wrapped = wrap_strategy_with_dp(strategy, dp_config)
-        assert isinstance(wrapped, DifferentialPrivacyClientSideFixedClipping)
+        _assert_dp_wrapped(wrapped, DifferentialPrivacyClientSideFixedClipping)
 
     def test_wraps_sum_fedavg(self):
         """DP wrapping works with SumFedAvg strategy too."""
@@ -70,12 +85,13 @@ class TestWrapStrategyWithDP:
         )
         dp_config = DPConfig(mode="server")
         wrapped = wrap_strategy_with_dp(strategy, dp_config)
-        assert isinstance(wrapped, DifferentialPrivacyServerSideFixedClipping)
+        _assert_dp_wrapped(wrapped, DifferentialPrivacyServerSideFixedClipping)
 
 
 # ── calibrate_gaussian_sigma ────────────────────────────────────────────────
 
 
+@pytest.mark.skipif(not _has_dp_accounting, reason="dp-accounting not installed")
 class TestCalibrateGaussianSigma:
     """Tests for the PLD-based noise calibration."""
 
@@ -126,7 +142,12 @@ class TestAdaptiveClipWrapper:
             adaptive_clipping=True, target_quantile=0.5, clip_learning_rate=0.2,
         )
         wrapped = wrap_strategy_with_dp(strategy, dp_config)
-        assert isinstance(wrapped, AdaptiveClipWrapper)
+        if _has_dp_accounting:
+            # Outer: _AccountingWrapper, inner: AdaptiveClipWrapper
+            assert isinstance(wrapped, _AccountingWrapper)
+            assert isinstance(wrapped._inner, AdaptiveClipWrapper)
+        else:
+            assert isinstance(wrapped, AdaptiveClipWrapper)
 
     def test_clip_decreases_when_updates_small(self):
         """When all updates are below clip norm, clip should decrease."""
@@ -294,9 +315,8 @@ class TestSumServerDP:
             "num-clients": "2",
         })
         components = server_fn(ctx)
-        assert isinstance(
-            components.strategy,
-            DifferentialPrivacyServerSideFixedClipping,
+        _assert_dp_wrapped(
+            components.strategy, DifferentialPrivacyServerSideFixedClipping,
         )
 
     def test_server_fn_dp_via_env_vars(self):
@@ -312,9 +332,8 @@ class TestSumServerDP:
         ctx = self._make_context()
         with patch.dict(os.environ, env_patch, clear=False):
             components = server_fn(ctx)
-        assert isinstance(
-            components.strategy,
-            DifferentialPrivacyClientSideFixedClipping,
+        _assert_dp_wrapped(
+            components.strategy, DifferentialPrivacyClientSideFixedClipping,
         )
 
     def test_server_fn_dp_run_config_overrides_env(self):
@@ -333,9 +352,8 @@ class TestSumServerDP:
         with patch.dict(os.environ, env_patch, clear=False):
             components = server_fn(ctx)
         # run_config says "server", so it should be server-side
-        assert isinstance(
-            components.strategy,
-            DifferentialPrivacyServerSideFixedClipping,
+        _assert_dp_wrapped(
+            components.strategy, DifferentialPrivacyServerSideFixedClipping,
         )
 
 

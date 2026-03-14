@@ -30,6 +30,13 @@ from sfl.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+
+class BudgetExhaustedError(RuntimeError):
+    """Raised when the cumulative ε exceeds the configured budget.
+
+    Training must stop to preserve the (ε,δ)-DP guarantee.
+    """
+
 try:
     from dp_accounting import dp_event
     from dp_accounting.pld import pld_privacy_accountant
@@ -68,6 +75,9 @@ class PrivacyAccountant:
             participate every round.
         delta: Target δ for (ε,δ)-DP.
         max_epsilon: Budget cap — training should stop if exceeded.
+        enforce_budget: If True, ``step()`` raises
+            ``BudgetExhaustedError`` when ε >= max_epsilon.
+            If False, only logs a warning (legacy behavior).
     """
 
     def __init__(
@@ -76,6 +86,7 @@ class PrivacyAccountant:
         sample_rate: float = 1.0,
         delta: float = 1e-5,
         max_epsilon: float = 10.0,
+        enforce_budget: bool = True,
     ):
         if not HAS_DP_ACCOUNTING:
             raise ImportError(
@@ -87,6 +98,7 @@ class PrivacyAccountant:
         self._sample_rate = sample_rate
         self._delta = delta
         self._max_epsilon = max_epsilon
+        self._enforce_budget = enforce_budget
         self._rounds = 0
 
         # Build per-round DpEvent with subsampling amplification.
@@ -129,11 +141,15 @@ class PrivacyAccountant:
         )
 
         if self.budget_exhausted:
-            logger.warning(
-                "Privacy budget EXHAUSTED: ε = %.4f >= max_epsilon = %.1f. "
-                "Further training degrades privacy guarantees.",
-                eps, self._max_epsilon,
+            msg = (
+                f"Privacy budget EXHAUSTED: ε = {eps:.4f} >= "
+                f"max_epsilon = {self._max_epsilon:.1f}. "
+                f"Further training degrades privacy guarantees."
             )
+            if self._enforce_budget:
+                logger.error(msg)
+                raise BudgetExhaustedError(msg)
+            logger.warning(msg)
 
         return eps
 

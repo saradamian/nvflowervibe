@@ -18,8 +18,10 @@ Client-side DP:
 """
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Dict, List, Optional, Tuple, Union, Literal
 
+from flwr.common import FitRes, Parameters, Scalar
+from flwr.server.client_proxy import ClientProxy
 from flwr.server.strategy import Strategy
 from flwr.server.strategy import (
     DifferentialPrivacyClientSideFixedClipping,
@@ -124,17 +126,20 @@ def wrap_strategy_with_dp(
 ) -> Strategy:
     """Wrap a Flower strategy with differential privacy.
 
-    Also creates a PrivacyAccountant (if dp-accounting is installed)
-    and attaches it as ``strategy.privacy_accountant`` for per-round
-    epsilon tracking.
+    Creates a DP-wrapped strategy with automatic per-round privacy
+    accounting. When ``max_epsilon`` is reached, ``aggregate_fit``
+    returns ``(None, {})`` to signal Flower to stop training, enforcing
+    the formal (ε,δ)-DP guarantee.
+
+    The privacy accountant is accessible via
+    ``strategy.privacy_accountant``.
 
     Args:
         strategy: Base strategy (e.g., FedAvg, SumFedAvg).
         dp_config: DP configuration.
 
     Returns:
-        DP-wrapped strategy (with ``.privacy_accountant`` attribute
-        if dp-accounting is available).
+        DP-wrapped strategy with automatic budget enforcement.
     """
     if dp_config.mode == "client":
         wrapped = DifferentialPrivacyClientSideFixedClipping(
@@ -160,10 +165,11 @@ def wrap_strategy_with_dp(
         )
 
     # Attach privacy accountant for per-round epsilon tracking
+    accountant = None
     try:
         from sfl.privacy.accountant import PrivacyAccountant
         sample_rate = dp_config.num_sampled_clients / dp_config.num_total_clients
-        wrapped.privacy_accountant = PrivacyAccountant(
+        accountant = PrivacyAccountant(
             noise_multiplier=dp_config.noise_multiplier,
             sample_rate=sample_rate,
             delta=dp_config.target_delta,
@@ -174,7 +180,6 @@ def wrap_strategy_with_dp(
             "dp-accounting not installed — no per-round epsilon tracking. "
             "Install with: pip install dp-accounting"
         )
-        wrapped.privacy_accountant = None
 
     # Wrap with adaptive clipping if requested
     if dp_config.adaptive_clipping:
@@ -189,4 +194,81 @@ def wrap_strategy_with_dp(
             f"lr={ac_cfg.learning_rate}"
         )
 
+    # Wrap with accounting + budget enforcement
+    if accountant is not None:
+        wrapped = _AccountingWrapper(wrapped, accountant)
+
     return wrapped
+
+
+class _AccountingWrapper(Strategy):
+    """Thin wrapper that auto-steps the privacy accountant after each round.
+
+    Intercepts ``aggregate_fit`` to:
+    1. Check budget *before* aggregating — if already exhausted, return
+       ``(None, {})`` to stop training.
+    2. Call the inner strategy's ``aggregate_fit``.
+    3. Call ``accountant.step()`` — if budget is now exhausted, the *next*
+       round will be stopped (this round's result is still returned so
+       the model is saved correctly).
+    """
+
+    def __init__(self, strategy: Strategy, accountant) -> None:
+        super().__init__()
+        self._inner = strategy
+        self.privacy_accountant = accountant
+
+    def __repr__(self) -> str:
+        return f"_AccountingWrapper({self._inner!r})"
+
+    # ── Pre-check + post-step in aggregate_fit ───────────────────────────
+
+    def aggregate_fit(
+        self,
+        server_round: int,
+        results: List[Tuple[ClientProxy, FitRes]],
+        failures: List[Union[Tuple[ClientProxy, FitRes], BaseException]],
+    ) -> Tuple[Optional[Parameters], Dict[str, Scalar]]:
+        if self.privacy_accountant.budget_exhausted:
+            logger.error(
+                "Round %d SKIPPED: privacy budget already exhausted "
+                "(ε=%.4f >= %.1f)",
+                server_round,
+                self.privacy_accountant.epsilon,
+                self.privacy_accountant._max_epsilon,
+            )
+            return None, {}
+
+        params, metrics = self._inner.aggregate_fit(
+            server_round, results, failures,
+        )
+
+        if params is not None:
+            from sfl.privacy.accountant import BudgetExhaustedError
+            try:
+                eps = self.privacy_accountant.step()
+                metrics["dp_epsilon"] = eps
+            except BudgetExhaustedError:
+                # This round succeeded, but next round will be blocked.
+                # Return this round's result so the model can be saved.
+                metrics["dp_epsilon"] = self.privacy_accountant.epsilon
+                metrics["dp_budget_exhausted"] = True
+
+        return params, metrics
+
+    # ── Delegate everything else ─────────────────────────────────────────
+
+    def initialize_parameters(self, client_manager):
+        return self._inner.initialize_parameters(client_manager)
+
+    def configure_fit(self, server_round, parameters, client_manager):
+        return self._inner.configure_fit(server_round, parameters, client_manager)
+
+    def configure_evaluate(self, server_round, parameters, client_manager):
+        return self._inner.configure_evaluate(server_round, parameters, client_manager)
+
+    def evaluate(self, server_round, parameters):
+        return self._inner.evaluate(server_round, parameters)
+
+    def aggregate_evaluate(self, server_round, results, failures):
+        return self._inner.aggregate_evaluate(server_round, results, failures)
