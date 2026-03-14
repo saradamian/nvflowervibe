@@ -28,6 +28,10 @@ Thumbs.db
 logs/
 *.log
 
+# Security audit (local only)
+SECURITY_AUDIT.md
+UPGRADE_PLAN.md
+
 # Environment
 .env
 

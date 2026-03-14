@@ -124,6 +124,31 @@ def parse_args() -> argparse.Namespace:
         default=0.1,
         help="SVT fraction of params to upload (default: 0.1)",
     )
+
+    # Secure Aggregation
+    parser.add_argument(
+        "--secagg",
+        action="store_true",
+        help="Enable SecAgg+ (secure aggregation)",
+    )
+    parser.add_argument(
+        "--secagg-shares",
+        type=int,
+        default=3,
+        help="SecAgg+ number of secret shares per client (default: 3)",
+    )
+    parser.add_argument(
+        "--secagg-threshold",
+        type=int,
+        default=2,
+        help="SecAgg+ reconstruction threshold (default: 2)",
+    )
+    parser.add_argument(
+        "--secagg-clip",
+        type=float,
+        default=8.0,
+        help="SecAgg+ clipping range (default: 8.0)",
+    )
     
     return parser.parse_args()
 
@@ -172,6 +197,8 @@ def main() -> int:
         logger.info(f"Filter:  PercentilePrivacy (top {args.percentile_privacy}%, gamma={args.percentile_gamma})")
     if args.svt_privacy:
         logger.info(f"Filter:  SVTPrivacy (eps={args.svt_epsilon}, frac={args.svt_fraction})")
+    if args.secagg:
+        logger.info(f"SecAgg+: ON (shares={args.secagg_shares}, threshold={args.secagg_threshold}, clip={args.secagg_clip})")
     logger.info("-" * 60)
     
     # Import apps
@@ -197,6 +224,9 @@ def main() -> int:
         client_mods.append(
             make_svt_privacy_mod(fraction=args.svt_fraction, epsilon=args.svt_epsilon)
         )
+    if args.secagg:
+        from flwr.client.mod import secaggplus_mod
+        client_mods.append(secaggplus_mod)
 
     client_app_kwargs = {"client_fn": client_fn}
     if client_mods:
@@ -214,7 +244,17 @@ def main() -> int:
         os.environ["SFL_DP_DELTA"] = str(args.dp_delta)
         os.environ["SFL_DP_MAX_EPSILON"] = str(args.dp_max_epsilon)
 
-    server_app = ServerApp(server_fn=server_fn)
+    if args.secagg:
+        from sfl.privacy.secagg import SecAggConfig, make_secagg_main
+        secagg_cfg = SecAggConfig(
+            num_shares=args.secagg_shares,
+            reconstruction_threshold=args.secagg_threshold,
+            clipping_range=args.secagg_clip,
+        )
+        server_app = ServerApp()
+        server_app.main()(make_secagg_main(server_fn, secagg_cfg))
+    else:
+        server_app = ServerApp(server_fn=server_fn)
     
     # Run simulation
     try:

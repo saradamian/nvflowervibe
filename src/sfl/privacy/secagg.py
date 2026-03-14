@@ -63,3 +63,44 @@ def build_secagg_config(cfg: SecAggConfig) -> dict:
         "clipping_range": cfg.clipping_range,
         "quantization_range": cfg.quantization_range,
     }
+
+
+def make_secagg_main(server_fn, secagg_cfg: SecAggConfig):
+    """Create a ServerApp main function that wraps server_fn with SecAgg+.
+
+    Flower's SecAgg+ requires the workflow execution path
+    (DefaultWorkflow + SecAggPlusWorkflow) rather than the server_fn
+    compatibility path. This helper bridges the two: it calls server_fn
+    to build the strategy/config, then runs them through the SecAgg+
+    workflow.
+
+    Args:
+        server_fn: The existing server_fn that returns ServerAppComponents.
+        secagg_cfg: SecAgg+ configuration.
+
+    Returns:
+        A main function suitable for ServerApp.main() decorator.
+    """
+    secagg_kwargs = build_secagg_config(secagg_cfg)
+
+    def secagg_main(grid, context):
+        from flwr.server.client_manager import SimpleClientManager
+        from flwr.server.compat import LegacyContext
+        from flwr.server.workflow import DefaultWorkflow, SecAggPlusWorkflow
+
+        # Reuse server_fn for strategy/config building
+        components = server_fn(context)
+
+        legacy_ctx = LegacyContext(
+            context=context,
+            config=components.config,
+            strategy=components.strategy,
+            client_manager=components.client_manager or SimpleClientManager(),
+        )
+
+        workflow = DefaultWorkflow(
+            fit_workflow=SecAggPlusWorkflow(**secagg_kwargs),
+        )
+        workflow(grid, legacy_ctx)
+
+    return secagg_main

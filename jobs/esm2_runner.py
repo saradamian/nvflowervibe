@@ -115,6 +115,16 @@ Examples:
     parser.add_argument("--exclude-layers", type=str, default=None,
                         help="Comma-separated parameter indices to exclude (e.g. '0,1')")
 
+    # Secure Aggregation
+    parser.add_argument("--secagg", action="store_true",
+                        help="Enable SecAgg+ (secure aggregation)")
+    parser.add_argument("--secagg-shares", type=int, default=3,
+                        help="SecAgg+ number of secret shares per client (default: 3)")
+    parser.add_argument("--secagg-threshold", type=int, default=2,
+                        help="SecAgg+ reconstruction threshold (default: 2)")
+    parser.add_argument("--secagg-clip", type=float, default=8.0,
+                        help="SecAgg+ clipping range (default: 8.0)")
+
     return parser.parse_args()
 
 
@@ -173,7 +183,6 @@ def run_flower(args: argparse.Namespace, logger) -> int:
     _set_esm2_config(args)
 
     client_app = ClientApp(client_fn=client_fn)
-    server_app = ServerApp(server_fn=server_fn)
 
     # Build client mods for privacy
     client_mods = []
@@ -204,9 +213,24 @@ def run_flower(args: argparse.Namespace, logger) -> int:
         from sfl.privacy.filters import make_exclude_vars_mod
         indices = [int(x.strip()) for x in args.exclude_layers.split(",")]
         client_mods.append(make_exclude_vars_mod(exclude_indices=indices))
+    if args.secagg:
+        from flwr.client.mod import secaggplus_mod
+        client_mods.append(secaggplus_mod)
 
     if client_mods:
         client_app = ClientApp(client_fn=client_fn, mods=client_mods)
+
+    if args.secagg:
+        from sfl.privacy.secagg import SecAggConfig, make_secagg_main
+        secagg_cfg = SecAggConfig(
+            num_shares=args.secagg_shares,
+            reconstruction_threshold=args.secagg_threshold,
+            clipping_range=args.secagg_clip,
+        )
+        server_app = ServerApp()
+        server_app.main()(make_secagg_main(server_fn, secagg_cfg))
+    else:
+        server_app = ServerApp(server_fn=server_fn)
 
     logger.info("Starting Flower simulation for ESM2 FL...")
 
