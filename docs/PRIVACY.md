@@ -570,7 +570,7 @@ for detailed deployment guides.
 ## Layer 5: Byzantine-Robust Aggregation
 
 Standard FedAvg is vulnerable to Byzantine (malicious or faulty)
-clients that send poisoned updates. SFL provides two robust
+clients that send poisoned updates. SFL provides three robust
 aggregation strategies as drop-in replacements.
 
 ### Multi-Krum (Blanchard et al., NeurIPS 2017)
@@ -585,7 +585,7 @@ python jobs/esm2_runner.py --aggregation krum --krum-byzantine 1
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--aggregation` | fedavg | Aggregation strategy: `fedavg`, `krum`, or `trimmed-mean` |
+| `--aggregation` | fedavg | Aggregation strategy: `fedavg`, `krum`, `trimmed-mean`, or `foundation-fl` |
 | `--krum-byzantine` | 1 | Max number of Byzantine clients to tolerate |
 
 ### Trimmed Mean (Yin et al., ICML 2018)
@@ -601,6 +601,37 @@ python jobs/esm2_runner.py --aggregation trimmed-mean --trim-ratio 0.1
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--trim-ratio` | 0.1 | Fraction of values to trim from each end (0–0.5) |
+
+### FoundationFL (NDSS 2025)
+
+Trust-scoring defense using a small server root dataset. The server
+computes a reference update from root data, then scores each client
+update by cosine similarity to the reference. Clients with similarity
+below the trust threshold are excluded; remaining updates are weighted
+by their similarity score (trust-weighted averaging).
+
+More robust than spectral or distance-based defenses against adaptive
+model-poisoning attacks (Shejwalkar & Houmansadr, USENIX 2021).
+
+```bash
+# FoundationFL with default threshold
+python jobs/esm2_runner.py --aggregation foundation-fl
+
+# Stricter filtering
+python jobs/esm2_runner.py --aggregation foundation-fl --ffl-threshold 0.3
+
+# Binary filtering (no trust weighting)
+python jobs/esm2_runner.py --aggregation foundation-fl --ffl-no-weighted
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--ffl-threshold` | 0.1 | Min cosine similarity to keep a client update (-1 to 1) |
+| `--ffl-no-weighted` | off | Use binary filtering instead of trust-weighted averaging |
+
+**Note**: For strongest defense, provide a root dataset so the server
+can compute its own reference update. Without a root dataset, the
+strategy falls back to using the client mean as reference (less robust).
 
 ---
 

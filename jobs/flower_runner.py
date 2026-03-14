@@ -233,7 +233,7 @@ def parse_args() -> argparse.Namespace:
         "--aggregation",
         type=str,
         default="fedavg",
-        choices=["fedavg", "krum", "trimmed-mean"],
+        choices=["fedavg", "krum", "trimmed-mean", "foundation-fl"],
         help="Aggregation strategy (default: fedavg)",
     )
     parser.add_argument(
@@ -248,7 +248,18 @@ def parse_args() -> argparse.Namespace:
         default=0.1,
         help="Fraction to trim per side for trimmed-mean (default: 0.1)",
     )
-    
+    parser.add_argument(
+        "--ffl-threshold",
+        type=float,
+        default=0.1,
+        help="FoundationFL trust threshold — min cosine similarity to keep (default: 0.1)",
+    )
+    parser.add_argument(
+        "--ffl-no-weighted",
+        action="store_true",
+        help="Disable trust-weighted averaging in FoundationFL (use binary filtering)",
+    )
+
     return parser.parse_args()
 
 
@@ -371,6 +382,8 @@ def main() -> int:
         os.environ["SFL_AGGREGATION"] = args.aggregation
         os.environ["SFL_KRUM_BYZANTINE"] = str(args.krum_byzantine)
         os.environ["SFL_TRIM_RATIO"] = str(args.trim_ratio)
+        os.environ["SFL_FFL_THRESHOLD"] = str(args.ffl_threshold)
+        os.environ["SFL_FFL_WEIGHTED"] = str(not args.ffl_no_weighted).lower()
 
     if args.secagg:
         from sfl.privacy.secagg import SecAggConfig, make_secagg_main

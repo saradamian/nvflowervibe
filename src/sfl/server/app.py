@@ -95,6 +95,13 @@ def server_fn(context: Context) -> ServerAppComponents:
             trim_ratio=float(os.environ.get("SFL_TRIM_RATIO", "0.1")),
             **strategy_kwargs,
         )
+    elif aggregation == "foundation-fl":
+        from sfl.server.robust import FoundationFLFedAvg
+        strategy = FoundationFLFedAvg(
+            trust_threshold=float(os.environ.get("SFL_FFL_THRESHOLD", "0.1")),
+            weighted=os.environ.get("SFL_FFL_WEIGHTED", "true").lower() == "true",
+            **strategy_kwargs,
+        )
     else:
         strategy = SumFedAvg(**strategy_kwargs)
 

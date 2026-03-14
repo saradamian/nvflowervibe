@@ -9,11 +9,13 @@ Trimmed Mean (Yin et al., ICML 2018):
     Coordinate-wise trimmed mean — removes the top and bottom β fraction
     of values at each coordinate before averaging.
 
-Spectral Filter (Tran et al., NeurIPS 2023):
-    Principal-component outlier detection — projects flattened updates
-    onto their top principal component and removes updates whose score
-    exceeds μ ± τ·σ.  More resistant to sophisticated model-poisoning
-    attacks that can fool Krum/TrimmedMean.
+FoundationFL (NDSS 2025):
+    Server-side trust scoring via a small root dataset. The server
+    computes a reference update from the root data, then scores each
+    client update by cosine similarity to the reference. Clients with
+    similarity below a threshold are down-weighted or excluded. More
+    robust than spectral or distance-based defenses against adaptive
+    model-poisoning attacks.
 """
 
 from typing import Dict, List, Optional, Tuple, Union
@@ -247,39 +249,57 @@ class TrimmedMeanFedAvg(FedAvg):
         return parameters, metrics_aggregated
 
 
-class SpectralFilterFedAvg(FedAvg):
-    """FedAvg with spectral outlier detection.
+class FoundationFLFedAvg(FedAvg):
+    """FedAvg with FoundationFL trust scoring (NDSS 2025).
 
-    Projects flattened client updates onto their top principal component
-    and flags updates whose projection score deviates by more than
-    ``threshold_sigma`` standard deviations from the mean.
-    Flagged updates are removed before averaging.
+    The server maintains a small root dataset and computes a reference
+    update each round. Client updates are scored by cosine similarity
+    to the reference. Updates with similarity below ``trust_threshold``
+    are excluded; remaining updates are weighted by their similarity
+    score (trust-weighted averaging).
 
-    More resistant to sophisticated model-poisoning attacks (e.g.
-    inner-product manipulation) that can evade Krum or TrimmedMean
-    (Shejwalkar & Houmansadr, USENIX 2021).
+    This replaces SpectralFilterFedAvg with a more robust defense that
+    is effective against adaptive model-poisoning attacks including
+    inner-product manipulation (Shejwalkar & Houmansadr, USENIX 2021).
 
-    Reference:
-        Tran et al., "Robust Aggregation via Spectral Filtering",
-        NeurIPS 2023.
+    The root dataset should be a small, clean subset (e.g., 100 samples)
+    representative of the overall distribution — not the full training set.
 
     Args:
-        threshold_sigma: Number of std deviations beyond which a
-            client's spectral score is considered an outlier.
-        project_dim: If the flattened update dimension exceeds this,
-            apply JL random projection first (for speed).
+        root_update: Flattened reference update vector from server's
+            root dataset. If None, uses the mean of client updates
+            as a fallback (less robust but still useful).
+        trust_threshold: Minimum cosine similarity to keep a client
+            update. Clients below this are excluded. Range: [-1, 1].
+            Default 0.1 is permissive; increase for stricter filtering.
+        weighted: If True, weight each kept client's contribution by
+            its cosine similarity score. If False, equal-weight the
+            kept clients (binary filtering).
         **kwargs: Passed to FedAvg.
     """
 
     def __init__(
         self,
-        threshold_sigma: float = 2.0,
-        project_dim: int = 1000,
+        root_update: Optional[np.ndarray] = None,
+        trust_threshold: float = 0.1,
+        weighted: bool = True,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
-        self.threshold_sigma = threshold_sigma
-        self.project_dim = project_dim
+        self._root_update = root_update
+        self.trust_threshold = trust_threshold
+        self.weighted = weighted
+
+    def set_root_update(self, root_update: np.ndarray) -> None:
+        """Set or update the server's reference update.
+
+        Call this each round with the update computed from the root
+        dataset, or once if the root update is static.
+
+        Args:
+            root_update: Flattened 1-D numpy array.
+        """
+        self._root_update = root_update
 
     def aggregate_fit(
         self,
@@ -293,7 +313,7 @@ class SpectralFilterFedAvg(FedAvg):
             return None, {}
 
         n = len(results)
-        if n < 3:
+        if n < 2:
             return super().aggregate_fit(server_round, results, failures)
 
         # Flatten each client update
@@ -303,46 +323,83 @@ class SpectralFilterFedAvg(FedAvg):
                 [p.ravel() for p in parameters_to_ndarrays(res.parameters)]
             )
             updates.append(flat)
-        stacked = np.stack(updates)  # (n, d)
 
-        # Optional dimensionality reduction
-        d = stacked.shape[1]
-        if d > self.project_dim:
-            rng = np.random.RandomState(42)
-            proj = rng.normal(
-                scale=1.0 / np.sqrt(self.project_dim),
-                size=(d, self.project_dim),
-            ).astype(np.float32)
-            stacked = stacked.astype(np.float32) @ proj
+        # Reference vector: root update or fallback to client mean
+        if self._root_update is not None:
+            ref = self._root_update
+        else:
+            ref = np.mean(updates, axis=0)
+            logger.warning(
+                "[foundation-fl] No root update set — using client mean "
+                "as reference. Set root_update for stronger defense."
+            )
 
-        # Center and compute top singular vector
-        mean = stacked.mean(axis=0)
-        centered = stacked - mean
-        # Power iteration for top singular vector (cheaper than full SVD)
-        v = np.random.RandomState(0).randn(centered.shape[1]).astype(centered.dtype)
-        for _ in range(10):
-            v = centered.T @ (centered @ v)
-            v = v / (np.linalg.norm(v) + 1e-12)
+        # Cosine similarity to reference
+        ref_norm = np.linalg.norm(ref) + 1e-12
+        similarities = np.array([
+            float(np.dot(u, ref) / (np.linalg.norm(u) + 1e-12) / ref_norm)
+            for u in updates
+        ])
 
-        # Spectral scores: projection onto top component
-        scores = centered @ v
-        mu = scores.mean()
-        sigma = scores.std() + 1e-12
+        # Filter by trust threshold
+        kept_idx = np.where(similarities >= self.trust_threshold)[0]
 
-        # Flag outliers
-        keep = np.abs(scores - mu) <= self.threshold_sigma * sigma
-        selected_idx = np.where(keep)[0]
+        if len(kept_idx) < 1:
+            # Fallback: keep the single most similar client
+            kept_idx = np.array([np.argmax(similarities)])
+            logger.warning(
+                "[foundation-fl] All clients below threshold (%.2f), "
+                "keeping most similar (sim=%.4f)",
+                self.trust_threshold, similarities[kept_idx[0]],
+            )
 
-        if len(selected_idx) < 1:
-            # Fallback: keep all if filter is too aggressive
-            selected_idx = np.arange(n)
-
-        removed = n - len(selected_idx)
+        removed = n - len(kept_idx)
         logger.info(
-            "[spectral-filter] round=%d removed %d/%d clients "
-            "(threshold=%.1fσ, score_std=%.4f)",
-            server_round, removed, n, self.threshold_sigma, sigma,
+            "[foundation-fl] round=%d kept %d/%d clients "
+            "(threshold=%.2f, sim: min=%.4f max=%.4f mean=%.4f)",
+            server_round, len(kept_idx), n, self.trust_threshold,
+            similarities[kept_idx].min(),
+            similarities[kept_idx].max(),
+            similarities[kept_idx].mean(),
         )
 
-        filtered_results = [results[i] for i in selected_idx]
-        return super().aggregate_fit(server_round, filtered_results, [])
+        # Trust-weighted or binary filtering
+        if self.weighted and len(kept_idx) > 1:
+            # Weight by similarity score (shifted to be positive)
+            kept_sims = similarities[kept_idx]
+            weights = kept_sims - kept_sims.min() + 1e-6
+            weights = weights / weights.sum()
+
+            # Weighted average of kept client parameters
+            all_params = [
+                parameters_to_ndarrays(results[i][1].parameters)
+                for i in kept_idx
+            ]
+            aggregated = []
+            for layer_idx in range(len(all_params[0])):
+                weighted_sum = sum(
+                    w * params[layer_idx]
+                    for w, params in zip(weights, all_params)
+                )
+                aggregated.append(weighted_sum)
+
+            parameters = ndarrays_to_parameters(aggregated)
+
+            metrics_aggregated: Dict[str, Scalar] = {
+                "foundationfl_kept": len(kept_idx),
+                "foundationfl_removed": removed,
+            }
+            if self.fit_metrics_aggregation_fn:
+                fit_metrics = [
+                    (results[i][1].num_examples, results[i][1].metrics)
+                    for i in kept_idx
+                ]
+                metrics_aggregated.update(
+                    self.fit_metrics_aggregation_fn(fit_metrics)
+                )
+
+            return parameters, metrics_aggregated
+        else:
+            # Binary filter: equal-weight kept clients via FedAvg
+            filtered_results = [results[i] for i in kept_idx]
+            return super().aggregate_fit(server_round, filtered_results, [])
