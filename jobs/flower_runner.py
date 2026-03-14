@@ -108,6 +108,12 @@ def parse_args() -> argparse.Namespace:
         help="Clipping bound for percentile privacy (default: 0.01)",
     )
     parser.add_argument(
+        "--percentile-noise",
+        type=float,
+        default=0.0,
+        help="Gaussian noise scale for percentile privacy (default: 0, no noise)",
+    )
+    parser.add_argument(
         "--svt-privacy",
         action="store_true",
         help="Enable SVT (Sparse Vector Technique) differential privacy",
@@ -217,7 +223,7 @@ def main() -> int:
     if args.percentile_privacy is not None:
         from sfl.privacy.filters import make_percentile_privacy_mod
         client_mods.append(
-            make_percentile_privacy_mod(args.percentile_privacy, args.percentile_gamma)
+            make_percentile_privacy_mod(args.percentile_privacy, args.percentile_gamma, args.percentile_noise)
         )
     if args.svt_privacy:
         from sfl.privacy.filters import make_svt_privacy_mod
