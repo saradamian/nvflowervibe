@@ -25,6 +25,7 @@ Usage:
 """
 
 from dataclasses import dataclass
+from typing import Optional
 
 from sfl.utils.logging import get_logger
 
@@ -78,6 +79,8 @@ class PrivacyAccountant:
         enforce_budget: If True, ``step()`` raises
             ``BudgetExhaustedError`` when ε >= max_epsilon.
             If False, only logs a warning (legacy behavior).
+        num_total: Total number of clients in the pool. Required
+            for per-round participation tracking via ``step()``.
     """
 
     def __init__(
@@ -87,6 +90,7 @@ class PrivacyAccountant:
         delta: float = 1e-5,
         max_epsilon: float = 10.0,
         enforce_budget: bool = True,
+        num_total: Optional[int] = None,
     ):
         if not HAS_DP_ACCOUNTING:
             raise ImportError(
@@ -100,16 +104,17 @@ class PrivacyAccountant:
         self._max_epsilon = max_epsilon
         self._enforce_budget = enforce_budget
         self._rounds = 0
+        self._num_total = num_total
 
-        # Build per-round DpEvent with subsampling amplification.
-        base_event = dp_event.GaussianDpEvent(noise_multiplier=noise_multiplier)
+        # Build default per-round DpEvent with subsampling amplification.
+        self._base_event = dp_event.GaussianDpEvent(noise_multiplier=noise_multiplier)
         if sample_rate < 1.0:
             self._round_event = dp_event.PoissonSampledDpEvent(
                 sampling_probability=sample_rate,
-                event=base_event,
+                event=self._base_event,
             )
         else:
-            self._round_event = base_event
+            self._round_event = self._base_event
 
         # Internal PLD accountant for tight composition
         self._accountant = pld_privacy_accountant.PLDAccountant()
@@ -121,16 +126,40 @@ class PrivacyAccountant:
             " (subsampling amplification ON)" if sample_rate < 1.0 else "",
         )
 
-    def step(self) -> float:
+    def step(self, num_participants: Optional[int] = None) -> float:
         """Record one FL round and return updated cumulative epsilon.
 
-        Should be called once after each aggregation round.
+        Args:
+            num_participants: Actual number of clients that participated
+                this round.  When provided (and differs from the default
+                sample count), a per-round DpEvent with the correct
+                sampling probability is composed instead of the default
+                fixed-rate event. This gives tighter bounds when
+                participation varies across rounds.
 
         Returns:
             Current cumulative ε at the configured δ.
         """
         self._rounds += 1
-        self._accountant.compose(self._round_event)
+
+        # Use per-round event if actual participation differs from default
+        if (
+            num_participants is not None
+            and self._num_total is not None
+            and self._num_total > 0
+            and num_participants != round(self._sample_rate * self._num_total)
+        ):
+            actual_rate = min(num_participants / self._num_total, 1.0)
+            if actual_rate < 1.0:
+                event = dp_event.PoissonSampledDpEvent(
+                    sampling_probability=actual_rate,
+                    event=self._base_event,
+                )
+            else:
+                event = self._base_event
+            self._accountant.compose(event)
+        else:
+            self._accountant.compose(self._round_event)
 
         eps = self._accountant.get_epsilon(self._delta)
 

@@ -125,3 +125,53 @@ class TestComposeEpsilon:
             delta_server=1e-5, delta_client=1e-5,
         )
         assert total_eps == pytest.approx(4.0)
+
+
+class TestParticipationTracking:
+    """Tests for per-round participation tracking in step()."""
+
+    def test_fewer_participants_lower_epsilon(self):
+        """Fewer actual participants → lower ε (tighter subsampling)."""
+        acc_default = PrivacyAccountant(
+            noise_multiplier=1.0, sample_rate=0.5, delta=1e-5,
+            enforce_budget=False, num_total=10,
+        )
+        acc_fewer = PrivacyAccountant(
+            noise_multiplier=1.0, sample_rate=0.5, delta=1e-5,
+            enforce_budget=False, num_total=10,
+        )
+        for _ in range(5):
+            acc_default.step()  # uses default 5/10 = 0.5
+            acc_fewer.step(num_participants=2)  # actual 2/10 = 0.2
+
+        assert acc_fewer.epsilon < acc_default.epsilon
+
+    def test_default_participants_unchanged(self):
+        """Passing num_participants matching default gives same result."""
+        acc_a = PrivacyAccountant(
+            noise_multiplier=1.0, sample_rate=0.5, delta=1e-5,
+            enforce_budget=False, num_total=10,
+        )
+        acc_b = PrivacyAccountant(
+            noise_multiplier=1.0, sample_rate=0.5, delta=1e-5,
+            enforce_budget=False, num_total=10,
+        )
+        for _ in range(5):
+            acc_a.step()
+            acc_b.step(num_participants=5)  # 5/10 = 0.5, matches default
+        assert acc_a.epsilon == pytest.approx(acc_b.epsilon, rel=1e-4)
+
+    def test_none_participants_uses_default(self):
+        """step(num_participants=None) should behave like step()."""
+        acc_a = PrivacyAccountant(
+            noise_multiplier=1.0, sample_rate=1.0, delta=1e-5,
+            enforce_budget=False,
+        )
+        acc_b = PrivacyAccountant(
+            noise_multiplier=1.0, sample_rate=1.0, delta=1e-5,
+            enforce_budget=False,
+        )
+        for _ in range(3):
+            acc_a.step()
+            acc_b.step(num_participants=None)
+        assert acc_a.epsilon == pytest.approx(acc_b.epsilon)

@@ -177,6 +177,7 @@ def wrap_strategy_with_dp(
             sample_rate=sample_rate,
             delta=dp_config.target_delta,
             max_epsilon=dp_config.max_epsilon,
+            num_total=dp_config.num_total_clients,
         )
     except ImportError:
         logger.warning(
@@ -250,7 +251,9 @@ class _AccountingWrapper(Strategy):
         if params is not None:
             from sfl.privacy.accountant import BudgetExhaustedError
             try:
-                eps = self.privacy_accountant.step()
+                eps = self.privacy_accountant.step(
+                    num_participants=len(results),
+                )
                 metrics["dp_epsilon"] = eps
             except BudgetExhaustedError:
                 # This round succeeded, but next round will be blocked.
