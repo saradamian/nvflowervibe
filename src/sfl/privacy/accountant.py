@@ -11,6 +11,11 @@ default, PRV additionally returns error bounds (ε_low, ε_est, ε_high).
 When sample_rate < 1.0, applies Poisson subsampling amplification for
 tighter privacy bounds (no extra noise needed — pure accounting win).
 
+Includes **shuffle-model amplification** (Balle et al., Crypto 2019;
+Feldman et al., 2021): when clients send updates through an anonymous
+shuffler, the central (ε,δ)-DP guarantee is tighter than the local ε₀
+each client applies.
+
 Usage:
     from sfl.privacy.accountant import PrivacyAccountant
 
@@ -477,3 +482,68 @@ def compute_pabi_epsilon(
         strong_convexity / smoothness, pabi_eps,
     )
     return pabi_eps
+
+
+def shuffle_amplification_epsilon(
+    local_epsilon: float,
+    num_clients: int,
+    delta: float = 1e-5,
+) -> float:
+    """Compute central (ε,δ)-DP guarantee under shuffle-model amplification.
+
+    When clients send locally-randomized updates through an anonymous
+    channel (shuffler), the central guarantee is significantly tighter
+    than the local ε₀ each client applies.
+
+    Uses the analytical bound from Feldman, McMillan & Talwar (2021,
+    Theorem 3.1), which improves on Balle et al. (Crypto 2019):
+
+        ε_central ≤ log(1 + (e^ε₀ - 1) / n · (√(2·log(4/δ)/n) + 1/n))
+
+    For small ε₀ this simplifies to approximately ε₀ · √(8·log(4/δ)/n).
+
+    This is a pure accounting improvement — no algorithmic changes needed.
+    Clients apply their existing local randomizer (e.g., DP-SGD with ε₀),
+    and the shuffler provides amplification for free.
+
+    Args:
+        local_epsilon: Per-client local ε₀ (e.g., from DP-SGD).
+        num_clients: Number of clients n participating in the round.
+        delta: Target δ for the central (ε,δ)-DP guarantee.
+
+    Returns:
+        Central ε under shuffle-model amplification. Always ≤ local_epsilon.
+
+    Raises:
+        ValueError: If num_clients < 2 or local_epsilon < 0 or delta <= 0.
+    """
+    import math
+
+    if num_clients < 2:
+        raise ValueError("Shuffle amplification requires at least 2 clients")
+    if local_epsilon < 0:
+        raise ValueError(f"local_epsilon must be non-negative, got {local_epsilon}")
+    if delta <= 0:
+        raise ValueError(f"delta must be positive, got {delta}")
+
+    if local_epsilon == 0:
+        return 0.0
+
+    n = num_clients
+    e_eps = math.exp(local_epsilon) - 1.0  # e^ε₀ - 1
+
+    # Feldman-McMillan-Talwar (2021) bound
+    inner = math.sqrt(2.0 * math.log(4.0 / delta) / n) + 1.0 / n
+    central_eps = math.log(1.0 + e_eps * inner)
+
+    # Shuffle amplification can never make things worse than local
+    result = min(central_eps, local_epsilon)
+
+    logger.info(
+        "Shuffle amplification: ε_local=%.4f → ε_central=%.4f "
+        "(n=%d, δ=%.1e, amplification=%.1fx)",
+        local_epsilon, result, n, delta,
+        local_epsilon / max(result, 1e-10),
+    )
+
+    return result

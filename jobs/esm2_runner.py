@@ -114,6 +114,8 @@ Examples:
                         choices=["pld", "prv"],
                         help="Privacy accounting backend: pld (Google, default) or "
                              "prv (Microsoft, with error bounds)")
+    parser.add_argument("--dp-shuffle", action="store_true",
+                        help="Enable shuffle-model DP amplification (assumes anonymous channel)")
 
     # Privacy filters
     parser.add_argument("--percentile-privacy", type=int, default=None, metavar="PCT",
@@ -257,6 +259,8 @@ def run_flower(args: argparse.Namespace, logger) -> int:
             os.environ["SFL_DP_QUANTILE_NOISE"] = str(quantile_noise)
 
         os.environ["SFL_DP_ACCOUNTING_BACKEND"] = args.dp_accounting_backend
+        if args.dp_shuffle:
+            os.environ["SFL_DP_SHUFFLE"] = "true"
 
         if args.dp_mode == "client":
             from flwr.client.mod import fixedclipping_mod

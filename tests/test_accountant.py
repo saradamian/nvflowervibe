@@ -18,7 +18,10 @@ pytestmark = pytest.mark.skipif(
     not _has_dp_accounting, reason="dp-accounting not installed"
 )
 
-from sfl.privacy.accountant import PrivacyAccountant, BudgetExhaustedError, compose_epsilon
+from sfl.privacy.accountant import (
+    PrivacyAccountant, BudgetExhaustedError, compose_epsilon,
+    shuffle_amplification_epsilon,
+)
 
 
 class TestPrivacyAccountant:
@@ -332,3 +335,76 @@ class TestPRVAccountant:
         )
         acc.step()
         assert acc.epsilon_bounds is None
+
+
+class TestShuffleAmplification:
+    """Tests for shuffle-model DP amplification."""
+
+    def test_amplification_reduces_epsilon(self):
+        """Shuffling n clients should give ε_central < ε_local."""
+        local_eps = 2.0
+        central_eps = shuffle_amplification_epsilon(
+            local_epsilon=local_eps, num_clients=100, delta=1e-5,
+        )
+        assert central_eps < local_eps
+
+    def test_more_clients_more_amplification(self):
+        """More clients → tighter central ε."""
+        eps_10 = shuffle_amplification_epsilon(
+            local_epsilon=1.0, num_clients=10, delta=1e-5,
+        )
+        eps_100 = shuffle_amplification_epsilon(
+            local_epsilon=1.0, num_clients=100, delta=1e-5,
+        )
+        assert eps_100 < eps_10
+
+    def test_zero_local_epsilon(self):
+        """Zero local ε → zero central ε."""
+        result = shuffle_amplification_epsilon(
+            local_epsilon=0.0, num_clients=10, delta=1e-5,
+        )
+        assert result == 0.0
+
+    def test_never_worse_than_local(self):
+        """Central ε should never exceed local ε."""
+        for eps in [0.01, 0.1, 1.0, 5.0, 10.0]:
+            result = shuffle_amplification_epsilon(
+                local_epsilon=eps, num_clients=2, delta=1e-5,
+            )
+            assert result <= eps
+
+    def test_small_epsilon_approximation(self):
+        """For small ε₀, central ε ≈ ε₀ · √(8·log(4/δ)/n)."""
+        import math
+        eps_0 = 0.01
+        n = 1000
+        delta = 1e-5
+        result = shuffle_amplification_epsilon(
+            local_epsilon=eps_0, num_clients=n, delta=delta,
+        )
+        # Approximate expected value
+        approx = eps_0 * math.sqrt(8.0 * math.log(4.0 / delta) / n)
+        # Should be in the right ballpark (within 2x)
+        assert result < approx * 2.0
+        assert result > 0
+
+    def test_invalid_num_clients(self):
+        """Should raise ValueError for < 2 clients."""
+        with pytest.raises(ValueError):
+            shuffle_amplification_epsilon(
+                local_epsilon=1.0, num_clients=1, delta=1e-5,
+            )
+
+    def test_invalid_delta(self):
+        """Should raise ValueError for non-positive delta."""
+        with pytest.raises(ValueError):
+            shuffle_amplification_epsilon(
+                local_epsilon=1.0, num_clients=10, delta=0.0,
+            )
+
+    def test_invalid_epsilon(self):
+        """Should raise ValueError for negative epsilon."""
+        with pytest.raises(ValueError):
+            shuffle_amplification_epsilon(
+                local_epsilon=-1.0, num_clients=10, delta=1e-5,
+            )

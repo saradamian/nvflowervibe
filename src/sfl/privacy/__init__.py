@@ -38,6 +38,7 @@ try:
         AccountingConfig,
         BudgetExhaustedError,
         compose_epsilon,
+        shuffle_amplification_epsilon,
         HAS_PRV_ACCOUNTANT,
     )
 except ImportError:
@@ -68,6 +69,7 @@ __all__ = [
     "AccountingConfig",
     "BudgetExhaustedError",
     "compose_epsilon",
+    "shuffle_amplification_epsilon",
     "HAS_PRV_ACCOUNTANT",
     "HEContext",
     "HEConfig",

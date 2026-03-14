@@ -125,6 +125,7 @@ class DPConfig:
     clip_learning_rate: float = 0.2
     quantile_noise_multiplier: float = 0.0
     accounting_backend: Literal["pld", "prv"] = "pld"
+    shuffle_model: bool = False
 
     def __post_init__(self):
         if self.noise_multiplier < 0:
@@ -246,7 +247,9 @@ def wrap_strategy_with_dp(
 
     # Wrap with accounting + budget enforcement
     if accountant is not None:
-        wrapped = _AccountingWrapper(wrapped, accountant)
+        wrapped = _AccountingWrapper(
+            wrapped, accountant, shuffle_model=dp_config.shuffle_model,
+        )
 
     return wrapped
 
@@ -263,10 +266,11 @@ class _AccountingWrapper(Strategy):
        the model is saved correctly).
     """
 
-    def __init__(self, strategy: Strategy, accountant) -> None:
+    def __init__(self, strategy: Strategy, accountant, *, shuffle_model: bool = False) -> None:
         super().__init__()
         self._inner = strategy
         self.privacy_accountant = accountant
+        self._shuffle_model = shuffle_model
 
     def __repr__(self) -> str:
         return f"_AccountingWrapper({self._inner!r})"
@@ -315,6 +319,20 @@ class _AccountingWrapper(Strategy):
                 # Return this round's result so the model can be saved.
                 metrics["dp_epsilon"] = self.privacy_accountant.epsilon
                 metrics["dp_budget_exhausted"] = True
+
+            # Shuffle-model amplification: if enabled, compute the
+            # tighter central ε from the per-client local ε
+            if self._shuffle_model and len(results) >= 2:
+                from sfl.privacy.accountant import shuffle_amplification_epsilon
+                local_eps = metrics.get("dp_epsilon", 0.0)
+                if local_eps > 0:
+                    central_eps = shuffle_amplification_epsilon(
+                        local_epsilon=local_eps,
+                        num_clients=len(results),
+                        delta=self.privacy_accountant._delta,
+                    )
+                    metrics["dp_shuffle_epsilon"] = central_eps
+                    metrics["dp_shuffle_amplification"] = local_eps / max(central_eps, 1e-10)
 
             # Compose with client-side DP-SGD epsilon if present
             client_epsilons = [

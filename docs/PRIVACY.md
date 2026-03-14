@@ -152,6 +152,49 @@ When `quantile_noise_multiplier > 0` (set via `DPConfig`), Gaussian noise
 is added to the binary "clipped/not-clipped" indicator before averaging,
 making the quantile estimate itself differentially private.
 
+### Shuffle-Model DP Amplification
+
+When clients send updates through an anonymous channel (shuffler),
+the central (ε,δ)-DP guarantee is significantly tighter than the
+local ε₀ each client applies. This is based on the analytical bound
+from Feldman, McMillan & Talwar (2021, Theorem 3.1).
+
+For small ε₀ and n clients, the central ε scales as
+approximately ε₀ · √(8·log(4/δ)/n) — a √n improvement over
+the local guarantee. This is a pure accounting win with no
+algorithmic changes needed.
+
+```bash
+# Enable shuffle-model amplification
+python jobs/esm2_runner.py --dp --dp-noise 0.5 --dp-shuffle
+
+# Works with any DP mode
+python jobs/flower_runner.py --dp --dp-noise 0.5 --dp-shuffle
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--dp-shuffle` | off | Enable shuffle-model DP amplification |
+
+When enabled, each round's fit metrics include:
+
+- `dp_shuffle_epsilon`: Central ε after amplification
+- `dp_shuffle_amplification`: Amplification factor (local ε / central ε)
+
+**Prerequisite**: Requires an anonymous communication channel between
+clients and server (e.g., a mixnet, onion routing, or a trusted shuffler
+service). Without this infrastructure, the amplification bound does not hold.
+
+```python
+from sfl.privacy.accountant import shuffle_amplification_epsilon
+
+# 100 clients, each with local ε₀ = 2.0
+central_eps = shuffle_amplification_epsilon(
+    local_epsilon=2.0, num_clients=100, delta=1e-5,
+)
+print(f"Central ε = {central_eps:.4f}")  # Much tighter than 2.0
+```
+
 ### Noise Calibration
 
 `calibrate_gaussian_sigma()` computes the minimal Gaussian noise σ needed

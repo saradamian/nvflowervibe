@@ -116,6 +116,11 @@ def parse_args() -> argparse.Namespace:
         choices=["pld", "prv"],
         help="Privacy accounting backend: pld (Google, default) or prv (Microsoft)",
     )
+    parser.add_argument(
+        "--dp-shuffle",
+        action="store_true",
+        help="Enable shuffle-model DP amplification (assumes anonymous channel)",
+    )
 
     # Privacy filters
     parser.add_argument(
@@ -358,6 +363,8 @@ def main() -> int:
             os.environ["SFL_DP_ADAPTIVE_CLIP"] = "true"
             os.environ["SFL_DP_TARGET_QUANTILE"] = str(args.dp_target_quantile)
             os.environ["SFL_DP_CLIP_LR"] = str(args.dp_clip_lr)
+        if args.dp_shuffle:
+            os.environ["SFL_DP_SHUFFLE"] = "true"
 
     # Pass aggregation config via env vars
     if args.aggregation != "fedavg":
