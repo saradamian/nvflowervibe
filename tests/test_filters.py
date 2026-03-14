@@ -32,6 +32,7 @@ from sfl.privacy.filters import (
     make_percentile_privacy_mod,
     make_svt_privacy_mod,
     make_exclude_vars_mod,
+    make_gradient_compression_mod,
 )
 
 
@@ -412,6 +413,82 @@ class TestExcludeVarsMod:
         result_params = _extract_params(result)
 
         np.testing.assert_array_equal(result_params[0], [1.0])
+
+
+# ── GradientCompression Tests ──────────────────────────────────────────────
+
+
+class TestGradientCompressionMod:
+
+    def test_compression_ratio(self):
+        """Output should have ~90% zeros when ratio=0.1."""
+        np.random.seed(42)
+        params = [np.random.randn(100).astype(np.float32)]
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_gradient_compression_mod(compression_ratio=0.1, noise_scale=0.0)
+        call_next = MagicMock(return_value=out_msg)
+
+        result = mod(in_msg, MagicMock(spec=Context), call_next)
+        result_params = _extract_params(result)
+
+        nonzero = np.count_nonzero(result_params[0])
+        assert nonzero == 10  # 10% of 100
+
+    def test_noise_applied(self):
+        """With noise_scale > 0, surviving values should differ from input."""
+        np.random.seed(42)
+        params = [np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)]
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_gradient_compression_mod(
+            compression_ratio=1.0, noise_scale=1.0, use_random_mask=False,
+        )
+        call_next = MagicMock(return_value=out_msg)
+
+        result = mod(in_msg, MagicMock(spec=Context), call_next)
+        result_params = _extract_params(result)
+
+        # Values should be modified by noise
+        assert not np.allclose(result_params[0], [1.0, 2.0, 3.0, 4.0, 5.0])
+
+    def test_random_mask_varies(self):
+        """Random masking should produce different selections across calls."""
+        # Use uniform magnitudes so selection is purely random
+        mod = make_gradient_compression_mod(
+            compression_ratio=0.2, noise_scale=0.0, use_random_mask=True,
+        )
+
+        # Separate messages to avoid in-place mutation sharing
+        params1 = [np.ones(50, dtype=np.float32)]
+        in1, out1 = _make_train_message(params1)
+        np.random.seed(1)
+        r1 = _extract_params(mod(in1, MagicMock(spec=Context), MagicMock(return_value=out1)))
+
+        params2 = [np.ones(50, dtype=np.float32)]
+        in2, out2 = _make_train_message(params2)
+        np.random.seed(2)
+        r2 = _extract_params(mod(in2, MagicMock(spec=Context), MagicMock(return_value=out2)))
+
+        # Different seeds → different mask selections
+        assert not np.array_equal(r1[0] != 0, r2[0] != 0)
+
+    def test_topk_deterministic(self):
+        """TopK (non-random) should always select the same values."""
+        params = [np.array([0.1, 0.5, 0.9, 0.2, 0.8], dtype=np.float32)]
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_gradient_compression_mod(
+            compression_ratio=0.4, noise_scale=0.0, use_random_mask=False,
+        )
+
+        r1 = _extract_params(mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg)))
+        r2 = _extract_params(mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg)))
+
+        np.testing.assert_array_equal(r1[0], r2[0])
+        # Top 2 by abs value are indices 2 (0.9) and 4 (0.8)
+        assert r1[0][2] != 0  # 0.9 should be kept
+        assert r1[0][4] != 0  # 0.8 should be kept
 
 
 # ── HE Tests ───────────────────────────────────────────────────────────────

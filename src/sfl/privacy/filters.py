@@ -373,3 +373,104 @@ def make_exclude_vars_mod(
         return out_msg
 
     return exclude_vars_mod
+
+
+# ── GradientCompression ────────────────────────────────────────────────────
+
+
+@dataclass
+class GradientCompressionConfig:
+    """Configuration for gradient compression defense.
+
+    Args:
+        compression_ratio: Fraction of gradient values to keep (0–1).
+        noise_scale: Gaussian noise std relative to the L2 norm
+            of surviving values, divided by sqrt(K).
+        use_random_mask: Use magnitude-weighted random masking
+            instead of deterministic TopK.
+    """
+    compression_ratio: float = 0.1
+    noise_scale: float = 0.01
+    use_random_mask: bool = True
+
+
+def make_gradient_compression_mod(
+    compression_ratio: float = 0.1,
+    noise_scale: float = 0.01,
+    use_random_mask: bool = True,
+) -> Callable[[Message, Context, ClientAppCallable], Message]:
+    """Create a Flower client mod that compresses gradient updates.
+
+    Keeps only ``compression_ratio`` fraction of gradient values (TopK or
+    random masking), zeros the rest, and optionally adds noise to
+    surviving values.
+
+    Random masking (default) selects values with probability proportional
+    to magnitude, preventing deterministic TopK from leaking which
+    parameters are consistently large.
+    """
+    cfg = GradientCompressionConfig(
+        compression_ratio=compression_ratio,
+        noise_scale=noise_scale,
+        use_random_mask=use_random_mask,
+    )
+
+    def gradient_compression_mod(
+        msg: Message, ctxt: Context, call_next: ClientAppCallable,
+    ) -> Message:
+        if msg.metadata.message_type != MessageType.TRAIN:
+            return call_next(msg, ctxt)
+
+        out_msg = call_next(msg, ctxt)
+        if out_msg.has_error():
+            return out_msg
+
+        fit_res = compat.recorddict_to_fitres(out_msg.content, keep_input=True)
+        params = parameters_to_ndarrays(fit_res.parameters)
+
+        flat = np.concatenate([p.ravel().astype(np.float64) for p in params])
+        n = flat.size
+        k = max(1, int(np.ceil(n * cfg.compression_ratio)))
+
+        if cfg.use_random_mask:
+            # Magnitude-weighted random selection
+            abs_flat = np.abs(flat)
+            total = abs_flat.sum()
+            if total > 0:
+                probs = abs_flat / total
+            else:
+                probs = np.ones(n) / n
+            selected = np.random.choice(n, size=k, replace=False, p=probs)
+        else:
+            # Deterministic TopK
+            selected = np.argpartition(np.abs(flat), -k)[-k:]
+
+        # Build sparse output
+        out = np.zeros_like(flat)
+        out[selected] = flat[selected]
+
+        # Add noise to surviving values
+        if cfg.noise_scale > 0 and k > 0:
+            l2 = np.linalg.norm(out[selected])
+            sigma = cfg.noise_scale * l2 / np.sqrt(k)
+            out[selected] += np.random.normal(scale=sigma, size=k)
+
+        log(INFO,
+            "gradient_compression: kept %d/%d values (%.1f%%), random=%s",
+            k, n, 100.0 * k / n, cfg.use_random_mask)
+
+        # Reshape back
+        compressed = []
+        offset = 0
+        for p in params:
+            size = p.size
+            compressed.append(
+                out[offset:offset + size].reshape(p.shape).astype(p.dtype)
+            )
+            offset += size
+
+        fit_res.parameters = ndarrays_to_parameters(compressed)
+        out_msg.content = compat.fitres_to_recorddict(fit_res, keep_input=True)
+        return out_msg
+
+    return gradient_compression_mod
