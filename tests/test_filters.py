@@ -181,6 +181,7 @@ class TestPercentilePrivacyMod:
             assert len(warning_calls) >= 1
             assert "NO formal privacy" in str(warning_calls[0])
 
+    @pytest.mark.skipif(not _has_dp_accounting, reason="dp-accounting not installed")
     def test_epsilon_calibrates_noise(self):
         """epsilon > 0 should auto-calibrate noise_scale via PLD."""
         params = [np.array([0.5, -0.5, 0.8, -0.8], dtype=np.float32)]
@@ -197,6 +198,7 @@ class TestPercentilePrivacyMod:
         # Output should differ from input (noise was added)
         assert not np.allclose(result_params[0], [0.5, -0.5, 0.8, -0.8], atol=1e-6)
 
+    @pytest.mark.skipif(not _has_dp_accounting, reason="dp-accounting not installed")
     def test_epsilon_overrides_noise_scale(self):
         """When epsilon is set, it should override the explicit noise_scale."""
         # Two mods: one with manual noise_scale, one with epsilon
