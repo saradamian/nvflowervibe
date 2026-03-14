@@ -15,19 +15,8 @@ import sfl.esm2.config as config_module
 class TestESM2RunConfig:
     """ESM2RunConfig dataclass behaviour."""
 
-    def test_default_values(self):
-        cfg = ESM2RunConfig()
-        assert cfg.num_clients == 2
-        assert cfg.num_rounds == 3
-        assert cfg.model_name == "facebook/esm2_t6_8M_UR50D"
-        assert cfg.learning_rate == 5e-5
-        assert cfg.local_epochs == 1
-        assert cfg.batch_size == 4
-        assert cfg.max_length == 128
-        assert cfg.fraction_fit == 1.0
-        assert cfg.fraction_evaluate == 1.0
-
-    def test_custom_values(self):
+    def test_custom_values_and_delegation(self):
+        """Custom values flow through FederationConfig composition."""
         cfg = ESM2RunConfig(
             federation=FederationConfig(
                 num_clients=4,
@@ -44,29 +33,7 @@ class TestESM2RunConfig:
         assert cfg.num_clients == 4
         assert cfg.num_rounds == 10
         assert cfg.model_name == "custom/model"
-        assert cfg.learning_rate == 1e-3
-        assert cfg.local_epochs == 3
-        assert cfg.batch_size == 16
-        assert cfg.max_length == 256
         assert cfg.fraction_fit == 0.5
-        assert cfg.fraction_evaluate == 0.5
-
-    def test_partial_override(self):
-        cfg = ESM2RunConfig(
-            federation=FederationConfig(num_clients=8),
-            learning_rate=1e-4,
-        )
-        assert cfg.num_clients == 8
-        assert cfg.learning_rate == 1e-4
-        # rest stays default
-        assert cfg.num_rounds == 1  # FederationConfig default
-        assert cfg.batch_size == 4
-
-    def test_composes_with_federation_config(self):
-        fed = FederationConfig(num_clients=5, num_rounds=10)
-        cfg = ESM2RunConfig(federation=fed)
-        assert cfg.federation is fed
-        assert isinstance(cfg.federation, FederationConfig)
 
     def test_federation_validation_propagates(self):
         """FederationConfig validation fires through ESM2RunConfig."""

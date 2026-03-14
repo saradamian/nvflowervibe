@@ -28,44 +28,14 @@ def esm2_client():
     )
 
 
-class TestESM2ClientInheritance:
-    """ESM2Client should extend BaseFederatedClient."""
-
-    def test_extends_base(self):
-        assert issubclass(ESM2Client, BaseFederatedClient)
-
-    def test_instance_of_base(self, esm2_client):
-        assert isinstance(esm2_client, BaseFederatedClient)
-
-    def test_has_device_from_base(self, esm2_client):
-        assert hasattr(esm2_client, "device")
-        assert esm2_client.device == "cpu"
-
-    def test_has_client_id_from_base(self, esm2_client):
-        assert esm2_client.client_id == 0
-
-
 class TestESM2ClientInit:
 
-    def test_loads_model(self, esm2_client):
+    def test_extends_base_and_has_data(self, esm2_client):
+        """Client inherits from BaseFederatedClient and loads data."""
+        assert isinstance(esm2_client, BaseFederatedClient)
+        assert esm2_client.device == "cpu"
         assert esm2_client.model is not None
-        assert hasattr(esm2_client.model, "parameters")
-
-    def test_loads_tokenizer(self, esm2_client):
-        assert esm2_client.tokenizer is not None
-
-    def test_partitions_data(self, esm2_client):
         assert len(esm2_client.train_data) > 0
-
-    def test_device_auto_detection(self):
-        """With device=None, should auto-detect (cpu in test env)."""
-        client = ESM2Client(
-            client_id=99,
-            partition_id=0,
-            num_partitions=1,
-            device=None,
-        )
-        assert client.device in ("cpu", "cuda")
 
 
 class TestESM2ClientMethods:

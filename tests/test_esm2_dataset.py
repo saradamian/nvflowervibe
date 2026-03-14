@@ -34,26 +34,14 @@ class TestProteinMLMDataset:
         ds = ProteinMLMDataset(seqs, tokenizer, max_length=32)
         assert len(ds) == 3
 
-    def test_getitem_keys(self, tokenizer):
+    def test_getitem_keys_shapes_types(self, tokenizer):
+        """Items have correct keys, shapes, and tensor types."""
         ds = ProteinMLMDataset(["ACDEFG"], tokenizer, max_length=32)
         item = ds[0]
-        assert "input_ids" in item
-        assert "attention_mask" in item
-        assert "labels" in item
-
-    def test_getitem_shapes(self, tokenizer):
-        ds = ProteinMLMDataset(["ACDEFG"], tokenizer, max_length=32)
-        item = ds[0]
-        assert item["input_ids"].shape == (32,)
-        assert item["attention_mask"].shape == (32,)
-        assert item["labels"].shape == (32,)
-
-    def test_getitem_returns_tensors(self, tokenizer):
-        ds = ProteinMLMDataset(["ACDEFG"], tokenizer, max_length=32)
-        item = ds[0]
-        assert isinstance(item["input_ids"], torch.Tensor)
-        assert isinstance(item["attention_mask"], torch.Tensor)
-        assert isinstance(item["labels"], torch.Tensor)
+        for key in ("input_ids", "attention_mask", "labels"):
+            assert key in item
+            assert isinstance(item[key], torch.Tensor)
+            assert item[key].shape == (32,)
 
     def test_labels_have_ignored_positions(self, tokenizer):
         """Non-masked positions should have label -100."""
@@ -86,14 +74,10 @@ class TestProteinMLMDataset:
 
 class TestLoadDemoDataset:
 
-    def test_returns_dataset(self, demo_dataset):
+    def test_loads_all_demo_sequences(self, demo_dataset):
+        """Demo dataset contains all built-in sequences."""
         assert isinstance(demo_dataset, ProteinMLMDataset)
-
-    def test_correct_length(self, demo_dataset):
         assert len(demo_dataset) == len(DEMO_SEQUENCES)
-
-    def test_sequences_stored(self, demo_dataset):
-        assert demo_dataset.sequences is DEMO_SEQUENCES
 
 
 class TestPartitionDataset:

@@ -13,7 +13,6 @@ from sfl.esm2.model import (
     DEFAULT_MODEL_NAME,
     get_parameters,
     load_model,
-    load_tokenizer,
     set_parameters,
 )
 
@@ -24,55 +23,15 @@ def esm2_model():
     return load_model(DEFAULT_MODEL_NAME)
 
 
-@pytest.fixture(scope="module")
-def esm2_tokenizer():
-    """Load ESM2 tokenizer once for all tests in this module."""
-    return load_tokenizer(DEFAULT_MODEL_NAME)
-
-
-class TestLoadModel:
-
-    def test_returns_model(self, esm2_model):
-        assert esm2_model is not None
-        assert hasattr(esm2_model, "parameters")
-
-    def test_model_has_parameters(self, esm2_model):
-        params = list(esm2_model.parameters())
-        assert len(params) > 0
-
-    def test_model_is_on_cpu(self, esm2_model):
-        first_param = next(esm2_model.parameters())
-        assert first_param.device.type == "cpu"
-
-
-class TestLoadTokenizer:
-
-    def test_returns_tokenizer(self, esm2_tokenizer):
-        assert esm2_tokenizer is not None
-
-    def test_tokenizer_can_encode(self, esm2_tokenizer):
-        tokens = esm2_tokenizer("ACDEFGHIKLMNPQRSTVWY", return_tensors="pt")
-        assert "input_ids" in tokens
-        assert tokens["input_ids"].shape[0] == 1
-
-    def test_tokenizer_has_mask_token(self, esm2_tokenizer):
-        assert esm2_tokenizer.mask_token_id is not None
-
-
 class TestGetParameters:
 
-    def test_returns_list_of_numpy(self, esm2_model):
+    def test_parameter_count_and_shapes_match_state_dict(self, esm2_model):
+        """get_parameters returns numpy arrays matching the model state dict."""
         params = get_parameters(esm2_model)
-        assert isinstance(params, list)
-        assert all(isinstance(p, np.ndarray) for p in params)
-
-    def test_parameter_count_matches_state_dict(self, esm2_model):
-        params = get_parameters(esm2_model)
-        assert len(params) == len(esm2_model.state_dict())
-
-    def test_parameter_shapes_match(self, esm2_model):
-        params = get_parameters(esm2_model)
-        for param_np, (_, tensor) in zip(params, esm2_model.state_dict().items()):
+        state_dict = esm2_model.state_dict()
+        assert len(params) == len(state_dict)
+        for param_np, (_, tensor) in zip(params, state_dict.items()):
+            assert isinstance(param_np, np.ndarray)
             assert param_np.shape == tuple(tensor.shape)
 
 

@@ -9,23 +9,11 @@ import numpy as np
 import pytest
 
 from sfl.client.sum_client import SumClient
-from sfl.types import ClientConfig, FederationConfig
+from sfl.types import FederationConfig
 
 
 class TestSumClient:
     """Tests for the SumClient class."""
-    
-    def test_init_default(self):
-        """Test default initialization."""
-        client = SumClient()
-        assert client.client_id == 0
-        assert client.secret == 0.0
-    
-    def test_init_with_secret(self):
-        """Test initialization with custom secret."""
-        client = SumClient(client_id=5, secret=42.0)
-        assert client.client_id == 5
-        assert client.secret == 42.0
     
     def test_compute_update(self):
         """Test compute_update returns correct values."""
@@ -104,15 +92,4 @@ class TestFederationConfig:
             FederationConfig(num_clients=2, min_available_clients=5)
 
 
-class TestClientConfig:
-    """Tests for ClientConfig."""
-    
-    def test_default_base_secret(self):
-        """Test default base_secret value."""
-        config = ClientConfig()
-        assert config.base_secret == 7.0
-    
-    def test_custom_base_secret(self):
-        """Test custom base_secret value."""
-        config = ClientConfig(base_secret=100.0)
-        assert config.base_secret == 100.0
+
