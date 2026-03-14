@@ -54,6 +54,32 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable verbose logging",
     )
+
+    # Privacy
+    parser.add_argument(
+        "--dp",
+        action="store_true",
+        help="Enable differential privacy",
+    )
+    parser.add_argument(
+        "--dp-noise",
+        type=float,
+        default=0.1,
+        help="DP noise multiplier (default: 0.1)",
+    )
+    parser.add_argument(
+        "--dp-clip",
+        type=float,
+        default=10.0,
+        help="DP clipping norm (default: 10.0)",
+    )
+    parser.add_argument(
+        "--dp-mode",
+        type=str,
+        default="server",
+        choices=["server", "client"],
+        help="DP mode: server-side or client-side (default: server)",
+    )
     
     return parser.parse_args()
 
@@ -67,7 +93,13 @@ def main() -> int:
         "federation": {
             "num_clients": args.num_clients,
             "num_rounds": args.num_rounds,
-        }
+        },
+        "dp": {
+            "enabled": args.dp,
+            "noise_multiplier": args.dp_noise,
+            "clipping_norm": args.dp_clip,
+            "mode": args.dp_mode,
+        },
     }
     
     if args.verbose:
@@ -91,6 +123,7 @@ def main() -> int:
     logger.info("=" * 60)
     logger.info(f"Clients: {config.federation.num_clients}")
     logger.info(f"Rounds: {config.federation.num_rounds}")
+    logger.info(f"DP:      {'ON ('+args.dp_mode+', noise='+str(args.dp_noise)+', clip='+str(args.dp_clip)+')' if args.dp else 'OFF'}")
     logger.info("-" * 60)
     
     # Import apps
@@ -101,7 +134,21 @@ def main() -> int:
     from flwr.client import ClientApp
     from flwr.server import ServerApp
     
-    client_app = ClientApp(client_fn=client_fn)
+    client_app_kwargs = {"client_fn": client_fn}
+    if args.dp and args.dp_mode == "client":
+        from flwr.client.mod import fixedclipping_mod
+        client_app_kwargs["mods"] = [fixedclipping_mod]
+
+    client_app = ClientApp(**client_app_kwargs)
+
+    # Pass DP config via env vars (run_simulation doesn't support run_config)
+    import os
+    if args.dp:
+        os.environ["SFL_DP_ENABLED"] = "true"
+        os.environ["SFL_DP_NOISE"] = str(args.dp_noise)
+        os.environ["SFL_DP_CLIP"] = str(args.dp_clip)
+        os.environ["SFL_DP_MODE"] = args.dp_mode
+
     server_app = ServerApp(server_fn=server_fn)
     
     # Run simulation

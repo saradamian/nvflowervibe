@@ -80,6 +80,32 @@ def server_fn(context: Context) -> ServerAppComponents:
         initial_parameters=initial_params,
         log_client_values=True,
     )
+
+    # Wrap with DP if configured (check run_config or env vars)
+    import os
+    dp_enabled = (
+        str(run_config.get("dp-enabled", "false")).lower() == "true"
+        or os.environ.get("SFL_DP_ENABLED", "").lower() == "true"
+    )
+    if dp_enabled:
+        from sfl.privacy.dp import DPConfig, wrap_strategy_with_dp
+
+        dp_config = DPConfig(
+            noise_multiplier=float(
+                run_config.get("dp-noise-multiplier",
+                               os.environ.get("SFL_DP_NOISE", "0.1"))
+            ),
+            clipping_norm=float(
+                run_config.get("dp-clipping-norm",
+                               os.environ.get("SFL_DP_CLIP", "10.0"))
+            ),
+            num_sampled_clients=num_clients,
+            mode=str(
+                run_config.get("dp-mode",
+                               os.environ.get("SFL_DP_MODE", "server"))
+            ),
+        )
+        strategy = wrap_strategy_with_dp(strategy, dp_config)
     
     # Create server config
     config = ServerConfig(num_rounds=num_rounds)
