@@ -28,7 +28,13 @@ from sfl.privacy.filters import (
 )
 from sfl.privacy.secagg import build_secagg_config, SecAggConfig
 
-# HE is optional — requires tenseal
+# Optional: privacy accounting (requires dp-accounting)
+try:
+    from sfl.privacy.accountant import PrivacyAccountant, AccountingConfig
+except ImportError:
+    pass
+
+# Optional: homomorphic encryption (requires tenseal)
 try:
     from sfl.privacy.he import HEContext, HEConfig
 except ImportError:
@@ -44,6 +50,8 @@ __all__ = [
     "make_exclude_vars_mod",
     "PercentilePrivacyConfig",
     "SVTPrivacyConfig",
+    "PrivacyAccountant",
+    "AccountingConfig",
     "HEContext",
     "HEConfig",
 ]
