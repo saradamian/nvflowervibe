@@ -325,6 +325,7 @@ def client_fn(context: Context) -> Client:
             noise_multiplier=float(os.environ.get("SFL_DPSGD_NOISE", "1.0")),
             target_delta=float(os.environ.get("SFL_DPSGD_DELTA", "1e-5")),
             auto_clip=os.environ.get("SFL_DPSGD_AUTOCLIP", "").lower() == "true",
+            ghost_clipping=os.environ.get("SFL_DPSGD_GHOST", "").lower() == "true",
         )
         enable_dpsgd(client, dpsgd_cfg)
 

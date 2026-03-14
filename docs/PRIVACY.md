@@ -247,6 +247,7 @@ python jobs/esm2_runner.py --dpsgd --dpsgd-noise 1.0 --dpsgd-clip 1.0
 | `--dpsgd-noise` | 1.0 | Noise multiplier for DP-SGD |
 | `--dpsgd-delta` | 1e-5 | Target δ for DP-SGD |
 | `--dpsgd-autoclip` | off | Enable AutoClip (Li et al., NeurIPS 2023) |
+| `--dpsgd-ghost` | off | Enable Ghost Clipping (memory-efficient two-pass DP-SGD) |
 
 Each client reports `dpsgd_epsilon` in its fit metrics, which is
 automatically composed with server-side ε by the `_AccountingWrapper`.
@@ -268,6 +269,26 @@ With AutoClip enabled:
 ```bash
 # AutoClip: no need to tune --dpsgd-clip
 python jobs/esm2_runner.py --dpsgd --dpsgd-noise 1.0 --dpsgd-autoclip
+```
+
+#### Ghost Clipping (Memory-Efficient DP-SGD)
+
+Standard Opacus materializes per-sample gradients, requiring O(B×P)
+memory (batch size × parameters). Ghost Clipping (Li et al., 2022;
+Opacus `grad_sample_mode="ghost"`) uses two backward passes instead:
+
+1. First pass computes per-sample gradient norms (O(B) memory)
+2. Second pass computes clipped aggregated gradients (O(P) memory)
+
+Total memory: O(B+P) instead of O(B×P) — critical for large models
+like ESM2.
+
+```bash
+# Ghost clipping for memory-efficient DP-SGD
+python jobs/esm2_runner.py --dpsgd --dpsgd-noise 1.0 --dpsgd-ghost
+
+# Can combine with AutoClip
+python jobs/esm2_runner.py --dpsgd --dpsgd-noise 1.0 --dpsgd-ghost --dpsgd-autoclip
 ```
 
 **Requires**: `pip install opacus>=1.5`
