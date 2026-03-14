@@ -152,6 +152,30 @@ When `quantile_noise_multiplier > 0` (set via `DPConfig`), Gaussian noise
 is added to the binary "clipped/not-clipped" indicator before averaging,
 making the quantile estimate itself differentially private.
 
+### Per-Layer Clipping (Yu et al., ICLR 2022)
+
+A single global clipping norm applies the same bound to every parameter
+tensor. For models like ESM2 where embedding/head layers have much larger
+norms than attention layers, this wastes privacy budget on small layers
+and under-clips large layers. Per-layer clipping applies independent L2
+clips to each parameter tensor, significantly improving utility.
+
+```bash
+# Default clip of 1.0 per layer
+python jobs/esm2_runner.py --per-layer-clip 1.0
+
+# Custom clip norms per layer index (JSON map)
+python jobs/esm2_runner.py --per-layer-clip 1.0 --per-layer-clip-map '{"0": 5.0, "1": 2.0}'
+```
+
+| Flag                    | Default | Description                              |
+|-------------------------|---------|------------------------------------------|
+| `--per-layer-clip`      | off     | Default per-layer L2 clip norm           |
+| `--per-layer-clip-map`  | none    | JSON mapping of layer index to clip norm |
+
+The overall L2 sensitivity is `sqrt(sum of clip_i^2)`, so per-layer
+clipping gives a tighter bound than applying `max(clip_i)` globally.
+
 ### Shuffle-Model DP Amplification
 
 When clients send updates through an anonymous channel (shuffler),

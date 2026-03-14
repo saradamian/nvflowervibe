@@ -837,6 +837,90 @@ class TestPerLayerClipMod:
         mod = make_per_layer_clip_mod(default_clip=1.0)
         assert callable(mod)
 
+    def test_clips_large_layer(self):
+        """A layer exceeding default_clip should be clipped to that norm."""
+        from sfl.privacy.adaptive_clip import make_per_layer_clip_mod
+        from tests.test_filters import _make_train_message, _extract_params
+
+        # Layer with norm = 10.0
+        params = [np.ones(100, dtype=np.float32)]  # norm = 10.0
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_per_layer_clip_mod(default_clip=2.0)
+
+        from unittest.mock import MagicMock
+        from flwr.common.context import Context
+        result = mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg))
+        result_params = _extract_params(result)
+
+        # Norm should now be <= 2.0
+        result_norm = float(np.linalg.norm(result_params[0]))
+        assert result_norm <= 2.01
+
+    def test_preserves_small_layer(self):
+        """A layer below default_clip should not be modified."""
+        from sfl.privacy.adaptive_clip import make_per_layer_clip_mod
+        from tests.test_filters import _make_train_message, _extract_params
+
+        params = [np.array([0.1, 0.2, 0.3], dtype=np.float32)]  # norm ~ 0.37
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_per_layer_clip_mod(default_clip=5.0)
+
+        from unittest.mock import MagicMock
+        from flwr.common.context import Context
+        result = mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg))
+        result_params = _extract_params(result)
+
+        np.testing.assert_allclose(result_params[0], params[0], atol=1e-6)
+
+    def test_per_layer_custom_norms(self):
+        """Custom clip_norms should apply different clips per layer index."""
+        from sfl.privacy.adaptive_clip import make_per_layer_clip_mod
+        from tests.test_filters import _make_train_message, _extract_params
+
+        # Two layers, both with norm = 10.0
+        params = [
+            np.ones(100, dtype=np.float32),   # norm = 10
+            np.ones(100, dtype=np.float32),   # norm = 10
+        ]
+        in_msg, out_msg = _make_train_message(params)
+
+        # Layer 0: clip at 1.0, layer 1: clip at 5.0
+        mod = make_per_layer_clip_mod(clip_norms={0: 1.0, 1: 5.0}, default_clip=10.0)
+
+        from unittest.mock import MagicMock
+        from flwr.common.context import Context
+        result = mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg))
+        result_params = _extract_params(result)
+
+        assert float(np.linalg.norm(result_params[0])) <= 1.01
+        assert float(np.linalg.norm(result_params[1])) <= 5.01
+
+    def test_direction_preserved(self):
+        """Clipping should preserve the direction of the gradient."""
+        from sfl.privacy.adaptive_clip import make_per_layer_clip_mod
+        from tests.test_filters import _make_train_message, _extract_params
+
+        params = [np.array([3.0, 4.0], dtype=np.float32)]  # norm = 5
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_per_layer_clip_mod(default_clip=1.0)
+
+        from unittest.mock import MagicMock
+        from flwr.common.context import Context
+        result = mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg))
+        result_params = _extract_params(result)
+
+        # Direction should be [3/5, 4/5] = [0.6, 0.8]
+        expected = np.array([0.6, 0.8], dtype=np.float32)
+        np.testing.assert_allclose(result_params[0], expected, atol=1e-5)
+
+    def test_exported_from_privacy_init(self):
+        """make_per_layer_clip_mod should be importable from sfl.privacy."""
+        from sfl.privacy import make_per_layer_clip_mod
+        assert callable(make_per_layer_clip_mod)
+
 
 # ── H1: Secure RNG Tests ───────────────────────────────────────────────────
 
