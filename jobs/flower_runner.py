@@ -109,6 +109,13 @@ def parse_args() -> argparse.Namespace:
         default=0.2,
         help="Learning rate for adaptive clip norm update (default: 0.2)",
     )
+    parser.add_argument(
+        "--dp-accounting-backend",
+        type=str,
+        default="pld",
+        choices=["pld", "prv"],
+        help="Privacy accounting backend: pld (Google, default) or prv (Microsoft)",
+    )
 
     # Privacy filters
     parser.add_argument(
@@ -346,6 +353,7 @@ def main() -> int:
         os.environ["SFL_DP_MODE"] = args.dp_mode
         os.environ["SFL_DP_DELTA"] = str(args.dp_delta)
         os.environ["SFL_DP_MAX_EPSILON"] = str(args.dp_max_epsilon)
+        os.environ["SFL_DP_ACCOUNTING_BACKEND"] = args.dp_accounting_backend
         if args.dp_adaptive_clip:
             os.environ["SFL_DP_ADAPTIVE_CLIP"] = "true"
             os.environ["SFL_DP_TARGET_QUANTILE"] = str(args.dp_target_quantile)

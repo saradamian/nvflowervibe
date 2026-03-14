@@ -78,9 +78,26 @@ python jobs/esm2_runner.py --dp --dp-mode client --dp-noise 0.1
 ### Privacy Accounting
 
 SFL automatically tracks the cumulative (ε,δ)-DP guarantee across rounds
-using Google's `dp-accounting` library with the PLD (Privacy Loss
-Distribution) accountant, which provides tighter composition bounds
-than RDP for Gaussian mechanisms.
+using one of two selectable backends:
+
+- **PLD** (default) — Google's `dp-accounting` library with the Privacy Loss
+  Distribution accountant. Tighter composition bounds than RDP for Gaussian
+  mechanisms.
+- **PRV** — Microsoft's `prv_accountant` library using the Privacy Random
+  Variable framework with FFT-based composition. Returns error bounds
+  (ε_low, ε_estimate, ε_high) in addition to the point estimate.
+
+```bash
+# Use default PLD backend
+python jobs/esm2_runner.py --dp --dp-noise 0.5
+
+# Use PRV backend (Microsoft) for error bounds
+python jobs/esm2_runner.py --dp --dp-noise 0.5 --dp-accounting-backend prv
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--dp-accounting-backend` | pld | `pld` (Google) or `prv` (Microsoft) |
 
 **Features:**
 
@@ -98,14 +115,25 @@ than RDP for Gaussian mechanisms.
   what ε would be after N more rounds without advancing state.
 - **BudgetExhaustedError** — raised when `enforce_budget=True` and
   the budget is exceeded, allowing callers to handle gracefully.
+- **PRV error bounds** — when using the PRV backend, access ε error
+  bounds via `accountant.epsilon_bounds` → `(ε_low, ε_est, ε_high)`.
 
 ```python
 from sfl.privacy.accountant import PrivacyAccountant
 
+# PLD backend (default)
 acc = PrivacyAccountant(noise_multiplier=1.0, delta=1e-5, max_epsilon=10.0)
+
+# PRV backend with error bounds
+acc = PrivacyAccountant(
+    noise_multiplier=1.0, delta=1e-5, max_epsilon=10.0, backend="prv",
+)
 for r in range(num_rounds):
     eps = acc.step()
     print(f"Round {r+1}: ε = {eps:.4f}")
+    if acc.backend == "prv":
+        low, est, high = acc.epsilon_bounds
+        print(f"  bounds: [{low:.4f}, {high:.4f}]")
     if acc.budget_exhausted:
         break
 ```
