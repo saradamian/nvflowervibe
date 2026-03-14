@@ -104,6 +104,18 @@ def server_fn(context: Context) -> ServerAppComponents:
                 run_config.get("dp-mode",
                                os.environ.get("SFL_DP_MODE", "server"))
             ),
+            target_delta=float(os.environ.get("SFL_DP_DELTA", "1e-5")),
+            max_epsilon=float(os.environ.get("SFL_DP_MAX_EPSILON", "10.0")),
+            num_total_clients=num_clients,
+            adaptive_clipping=(
+                os.environ.get("SFL_DP_ADAPTIVE_CLIP", "").lower() == "true"
+            ),
+            target_quantile=float(
+                os.environ.get("SFL_DP_TARGET_QUANTILE", "0.5")
+            ),
+            clip_learning_rate=float(
+                os.environ.get("SFL_DP_CLIP_LR", "0.2")
+            ),
         )
         strategy = wrap_strategy_with_dp(strategy, dp_config)
     

@@ -102,6 +102,9 @@ class DPConfig:
         max_epsilon: Stop training when ε exceeds this budget.
         num_total_clients: Total client pool size for subsampling
             amplification in privacy accounting.
+        adaptive_clipping: Enable adaptive clipping norm (Andrew et al. 2021).
+        target_quantile: Target fraction of unclipped updates (0–1).
+        clip_learning_rate: Geometric step size for clip norm update.
     """
     noise_multiplier: float = 0.1
     clipping_norm: float = 10.0
@@ -110,6 +113,9 @@ class DPConfig:
     target_delta: float = 1e-5
     max_epsilon: float = 10.0
     num_total_clients: int = 2
+    adaptive_clipping: bool = False
+    target_quantile: float = 0.5
+    clip_learning_rate: float = 0.2
 
 
 def wrap_strategy_with_dp(
@@ -169,5 +175,18 @@ def wrap_strategy_with_dp(
             "Install with: pip install dp-accounting"
         )
         wrapped.privacy_accountant = None
+
+    # Wrap with adaptive clipping if requested
+    if dp_config.adaptive_clipping:
+        from sfl.privacy.adaptive_clip import AdaptiveClipWrapper, AdaptiveClipConfig
+        ac_cfg = AdaptiveClipConfig(
+            target_quantile=dp_config.target_quantile,
+            learning_rate=dp_config.clip_learning_rate,
+        )
+        wrapped = AdaptiveClipWrapper(wrapped, ac_cfg)
+        logger.info(
+            f"Adaptive clipping enabled: target_quantile={ac_cfg.target_quantile}, "
+            f"lr={ac_cfg.learning_rate}"
+        )
 
     return wrapped

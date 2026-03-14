@@ -107,6 +107,102 @@ class TestCalibrateGaussianSigma:
             calibrate_gaussian_sigma(epsilon=1.0, delta=-1, sensitivity=1.0)
 
 
+# ── AdaptiveClipWrapper ────────────────────────────────────────────────────
+
+
+class TestAdaptiveClipWrapper:
+    """Tests for adaptive clipping norm adjustment."""
+
+    def test_wrap_strategy_with_adaptive_clip(self):
+        """adaptive_clipping=True should wrap with AdaptiveClipWrapper."""
+        from sfl.privacy.adaptive_clip import AdaptiveClipWrapper
+        initial = ndarrays_to_parameters([np.array([0.0], dtype=np.float32)])
+        strategy = FedAvg(
+            min_fit_clients=2, min_available_clients=2,
+            initial_parameters=initial,
+        )
+        dp_config = DPConfig(
+            mode="server", noise_multiplier=0.5, clipping_norm=1.0,
+            adaptive_clipping=True, target_quantile=0.5, clip_learning_rate=0.2,
+        )
+        wrapped = wrap_strategy_with_dp(strategy, dp_config)
+        assert isinstance(wrapped, AdaptiveClipWrapper)
+
+    def test_clip_decreases_when_updates_small(self):
+        """When all updates are below clip norm, clip should decrease."""
+        from sfl.privacy.adaptive_clip import AdaptiveClipWrapper, AdaptiveClipConfig
+
+        inner = MagicMock()
+        inner.clipping_norm = 10.0
+        # current_round_params: single param = [0.0]
+        inner.current_round_params = [np.array([0.0], dtype=np.float32)]
+        inner.aggregate_fit.return_value = (None, {})
+
+        wrapper = AdaptiveClipWrapper(inner, AdaptiveClipConfig(target_quantile=0.5))
+
+        # Client sends update with norm=1.0 (well below clip=10.0)
+        from flwr.common import FitRes, Status, Code, ndarrays_to_parameters as n2p
+        fit_res = FitRes(
+            status=Status(code=Code.OK, message=""),
+            parameters=n2p([np.array([1.0], dtype=np.float32)]),
+            num_examples=1, metrics={},
+        )
+        results = [(MagicMock(), fit_res)]
+
+        wrapper.aggregate_fit(1, results, [])
+        # 0% clipped, target 50% → clip should decrease
+        assert inner.clipping_norm < 10.0
+
+    def test_clip_increases_when_updates_large(self):
+        """When all updates exceed clip norm, clip should increase."""
+        from sfl.privacy.adaptive_clip import AdaptiveClipWrapper, AdaptiveClipConfig
+
+        inner = MagicMock()
+        inner.clipping_norm = 1.0
+        inner.current_round_params = [np.array([0.0], dtype=np.float32)]
+        inner.aggregate_fit.return_value = (None, {})
+
+        wrapper = AdaptiveClipWrapper(inner, AdaptiveClipConfig(target_quantile=0.5))
+
+        from flwr.common import FitRes, Status, Code, ndarrays_to_parameters as n2p
+        fit_res = FitRes(
+            status=Status(code=Code.OK, message=""),
+            parameters=n2p([np.array([100.0], dtype=np.float32)]),
+            num_examples=1, metrics={},
+        )
+        results = [(MagicMock(), fit_res)]
+
+        wrapper.aggregate_fit(1, results, [])
+        # 100% clipped, target 50% → clip should increase
+        assert inner.clipping_norm > 1.0
+
+    def test_clip_bounds_respected(self):
+        """Clip norm should be clamped to [clip_min, clip_max]."""
+        from sfl.privacy.adaptive_clip import AdaptiveClipWrapper, AdaptiveClipConfig
+
+        inner = MagicMock()
+        inner.clipping_norm = 0.2
+        inner.current_round_params = [np.array([0.0], dtype=np.float32)]
+        inner.aggregate_fit.return_value = (None, {})
+
+        cfg = AdaptiveClipConfig(
+            target_quantile=0.5, learning_rate=10.0,  # aggressive lr
+            clip_min=0.1, clip_max=100.0,
+        )
+        wrapper = AdaptiveClipWrapper(inner, cfg)
+
+        # All updates tiny → clip wants to go very low
+        from flwr.common import FitRes, Status, Code, ndarrays_to_parameters as n2p
+        fit_res = FitRes(
+            status=Status(code=Code.OK, message=""),
+            parameters=n2p([np.array([0.001], dtype=np.float32)]),
+            num_examples=1, metrics={},
+        )
+        results = [(MagicMock(), fit_res)]
+        wrapper.aggregate_fit(1, results, [])
+        assert inner.clipping_norm >= cfg.clip_min
+
+
 # ── SecAggConfig ────────────────────────────────────────────────────────────
 
 

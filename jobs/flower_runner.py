@@ -92,6 +92,23 @@ def parse_args() -> argparse.Namespace:
         default=10.0,
         help="DP budget cap — stop training when epsilon exceeds this (default: 10.0)",
     )
+    parser.add_argument(
+        "--dp-adaptive-clip",
+        action="store_true",
+        help="Enable adaptive clipping norm (Andrew et al. 2021)",
+    )
+    parser.add_argument(
+        "--dp-target-quantile",
+        type=float,
+        default=0.5,
+        help="Target unclipped fraction for adaptive clipping (default: 0.5)",
+    )
+    parser.add_argument(
+        "--dp-clip-lr",
+        type=float,
+        default=0.2,
+        help="Learning rate for adaptive clip norm update (default: 0.2)",
+    )
 
     # Privacy filters
     parser.add_argument(
@@ -264,6 +281,10 @@ def main() -> int:
         os.environ["SFL_DP_MODE"] = args.dp_mode
         os.environ["SFL_DP_DELTA"] = str(args.dp_delta)
         os.environ["SFL_DP_MAX_EPSILON"] = str(args.dp_max_epsilon)
+        if args.dp_adaptive_clip:
+            os.environ["SFL_DP_ADAPTIVE_CLIP"] = "true"
+            os.environ["SFL_DP_TARGET_QUANTILE"] = str(args.dp_target_quantile)
+            os.environ["SFL_DP_CLIP_LR"] = str(args.dp_clip_lr)
 
     if args.secagg:
         from sfl.privacy.secagg import SecAggConfig, make_secagg_main

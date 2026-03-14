@@ -19,6 +19,7 @@ SecAgg:
 """
 
 from sfl.privacy.dp import wrap_strategy_with_dp, DPConfig, calibrate_gaussian_sigma
+from sfl.privacy.adaptive_clip import AdaptiveClipWrapper, AdaptiveClipConfig
 from sfl.privacy.filters import (
     make_percentile_privacy_mod,
     make_svt_privacy_mod,
@@ -43,6 +44,8 @@ except ImportError:
 __all__ = [
     "wrap_strategy_with_dp",
     "DPConfig",
+    "AdaptiveClipWrapper",
+    "AdaptiveClipConfig",
     "calibrate_gaussian_sigma",
     "build_secagg_config",
     "SecAggConfig",
