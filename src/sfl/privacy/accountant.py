@@ -190,3 +190,27 @@ class PrivacyAccountant:
         preview = pld_privacy_accountant.PLDAccountant()
         preview.compose(self._round_event, count=num_rounds)
         return preview.get_epsilon(self._delta)
+
+
+def compose_epsilon(
+    eps_server: float,
+    eps_client: float,
+    delta_server: float = 1e-5,
+    delta_client: float = 1e-5,
+) -> tuple:
+    """Compose server-side and client-side (ε,δ) via basic sequential composition.
+
+    When both server-side DP (aggregate noise) and client-side DP-SGD
+    (per-example clipping+noise) are used, the total privacy guarantee
+    for a single data point is bounded by their sequential composition.
+
+    Args:
+        eps_server: Server-side cumulative ε.
+        eps_client: Client-side per-round ε (worst across clients).
+        delta_server: Server-side δ.
+        delta_client: Client-side δ.
+
+    Returns:
+        (ε_total, δ_total) under basic sequential composition.
+    """
+    return (eps_server + eps_client, delta_server + delta_client)

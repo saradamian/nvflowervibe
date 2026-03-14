@@ -37,6 +37,7 @@ try:
         PrivacyAccountant,
         AccountingConfig,
         BudgetExhaustedError,
+        compose_epsilon,
     )
 except ImportError:
     pass
@@ -65,6 +66,7 @@ __all__ = [
     "PrivacyAccountant",
     "AccountingConfig",
     "BudgetExhaustedError",
+    "compose_epsilon",
     "HEContext",
     "HEConfig",
 ]
