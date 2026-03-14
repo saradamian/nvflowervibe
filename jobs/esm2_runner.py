@@ -161,12 +161,16 @@ Examples:
 
     # Aggregation strategy
     parser.add_argument("--aggregation", type=str, default="fedavg",
-                        choices=["fedavg", "krum", "trimmed-mean"],
+                        choices=["fedavg", "krum", "trimmed-mean", "foundation-fl"],
                         help="Aggregation strategy (default: fedavg)")
     parser.add_argument("--krum-byzantine", type=int, default=1,
                         help="Expected number of Byzantine clients for Multi-Krum (default: 1)")
     parser.add_argument("--trim-ratio", type=float, default=0.1,
                         help="Fraction to trim per side for trimmed-mean (default: 0.1)")
+    parser.add_argument("--ffl-threshold", type=float, default=0.1,
+                        help="FoundationFL trust threshold — min cosine similarity (default: 0.1)")
+    parser.add_argument("--ffl-no-weighted", action="store_true",
+                        help="Disable trust-weighted averaging in FoundationFL")
 
     # Per-example DP-SGD (Opacus)
     parser.add_argument("--dpsgd", action="store_true",
@@ -302,6 +306,8 @@ def run_flower(args: argparse.Namespace, logger) -> int:
         os.environ["SFL_KRUM_BYZANTINE"] = str(args.krum_byzantine)
     elif args.aggregation == "trimmed-mean":
         os.environ["SFL_TRIM_RATIO"] = str(args.trim_ratio)
+        os.environ["SFL_FFL_THRESHOLD"] = str(args.ffl_threshold)
+        os.environ["SFL_FFL_WEIGHTED"] = str(not args.ffl_no_weighted).lower()
 
     # Per-example DP-SGD
     if args.dpsgd:

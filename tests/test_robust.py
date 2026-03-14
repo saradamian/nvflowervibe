@@ -15,7 +15,7 @@ from flwr.common import (
 )
 from flwr.server.client_proxy import ClientProxy
 
-from sfl.server.robust import MultiKrumFedAvg, TrimmedMeanFedAvg, SpectralFilterFedAvg
+from sfl.server.robust import MultiKrumFedAvg, TrimmedMeanFedAvg, FoundationFLFedAvg
 
 
 def _make_result(values, num_examples=1):
@@ -162,34 +162,39 @@ class TestTrimmedMeanFedAvg:
         )
 
 
-# ── Spectral Filter (S1) ───────────────────────────────────────────────────
+# ── FoundationFL ──────────────────────────────────────────────────────────
 
-class TestSpectralFilterFedAvg:
-    """Tests for SpectralFilterFedAvg (S1)."""
+class TestFoundationFLFedAvg:
+    """Tests for FoundationFLFedAvg (NDSS 2025)."""
 
-    def test_excludes_outlier(self):
-        """Spectral filter should remove a client with a dramatically different update."""
+    def test_excludes_adversary_with_root(self):
+        """With a root update, adversarial clients should be excluded."""
         honest = [[1.0, 1.0, 1.0, 1.0, 1.0]] * 5
-        adversary = [[100.0, 100.0, 100.0, 100.0, 100.0]]
+        adversary = [[-100.0, -100.0, -100.0, -100.0, -100.0]]
         results = [_make_result([v]) for v in honest + adversary]
 
-        strategy = SpectralFilterFedAvg(
-            threshold_sigma=1.5,
+        root = np.array([1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32)
+        strategy = FoundationFLFedAvg(
+            root_update=root,
+            trust_threshold=0.0,
             min_fit_clients=1,
             min_available_clients=1,
         )
-        params, _ = strategy.aggregate_fit(1, results, [])
+        params, metrics = strategy.aggregate_fit(1, results, [])
         assert params is not None
         aggregated = parameters_to_ndarrays(params)
+        # Result should be near [1,1,1,1,1], not pulled toward -100
         np.testing.assert_allclose(aggregated[0], [1.0] * 5, atol=0.5)
 
     def test_keeps_all_when_honest(self):
-        """When all clients are similar, none should be removed."""
+        """When all clients are similar and aligned with root, none removed."""
         values = [[1.0, 2.0, 3.0]] * 6
         results = [_make_result([v]) for v in values]
 
-        strategy = SpectralFilterFedAvg(
-            threshold_sigma=2.0,
+        root = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        strategy = FoundationFLFedAvg(
+            root_update=root,
+            trust_threshold=0.0,
             min_fit_clients=1,
             min_available_clients=1,
         )
@@ -198,36 +203,71 @@ class TestSpectralFilterFedAvg:
         aggregated = parameters_to_ndarrays(params)
         np.testing.assert_allclose(aggregated[0], [1.0, 2.0, 3.0], atol=0.01)
 
-    def test_fallback_on_small_n(self):
-        """With < 3 clients, falls back to FedAvg."""
-        results = [_make_result([[2.0]]), _make_result([[4.0]])]
-        strategy = SpectralFilterFedAvg(
-            threshold_sigma=2.0,
-            min_fit_clients=1,
-            min_available_clients=1,
-        )
-        params, _ = strategy.aggregate_fit(1, results, [])
-        aggregated = parameters_to_ndarrays(params)
-        np.testing.assert_allclose(aggregated[0], [3.0], atol=0.1)
+    def test_fallback_without_root(self):
+        """Without root update, uses client mean as reference and still aggregates."""
+        # All clients similar — no root needed, mean-based reference works
+        values = [[1.0, 2.0]] * 4
+        results = [_make_result([v]) for v in values]
 
-    def test_jl_projection_applied(self):
-        """When d > project_dim, JL projection should be applied without error."""
-        d = 2000
-        honest = [np.ones(d, dtype=np.float32)] * 5
-        adversary = [np.ones(d, dtype=np.float32) * 50.0]
-        results = [_make_result([v]) for v in honest + adversary]
-
-        strategy = SpectralFilterFedAvg(
-            threshold_sigma=1.5,
-            project_dim=100,  # force projection
+        strategy = FoundationFLFedAvg(
+            root_update=None,
+            trust_threshold=0.0,
             min_fit_clients=1,
             min_available_clients=1,
         )
         params, _ = strategy.aggregate_fit(1, results, [])
         assert params is not None
         aggregated = parameters_to_ndarrays(params)
-        # Should be near 1.0, not pulled toward 50
-        np.testing.assert_allclose(aggregated[0][:5], [1.0] * 5, atol=1.0)
+        np.testing.assert_allclose(aggregated[0], [1.0, 2.0], atol=0.1)
+
+    def test_weighted_averaging(self):
+        """With weighted=True, more similar clients should have higher weight."""
+        # Two clients: one closer to root, one farther
+        results = [
+            _make_result([[1.0, 1.0, 1.0]]),  # very similar to root
+            _make_result([[0.5, 0.5, 0.5]]),  # similar direction, smaller
+        ]
+        root = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+        strategy = FoundationFLFedAvg(
+            root_update=root,
+            trust_threshold=-1.0,  # keep all
+            weighted=True,
+            min_fit_clients=1,
+            min_available_clients=1,
+        )
+        params, _ = strategy.aggregate_fit(1, results, [])
+        assert params is not None
+
+    def test_binary_filtering(self):
+        """With weighted=False, kept clients get equal weight."""
+        results = [
+            _make_result([[2.0, 2.0]]),
+            _make_result([[4.0, 4.0]]),
+        ]
+        root = np.array([1.0, 1.0], dtype=np.float32)
+        strategy = FoundationFLFedAvg(
+            root_update=root,
+            trust_threshold=-1.0,
+            weighted=False,
+            min_fit_clients=1,
+            min_available_clients=1,
+        )
+        params, _ = strategy.aggregate_fit(1, results, [])
+        assert params is not None
+        aggregated = parameters_to_ndarrays(params)
+        np.testing.assert_allclose(aggregated[0], [3.0, 3.0], atol=0.1)
+
+    def test_set_root_update(self):
+        """set_root_update should update the reference vector."""
+        strategy = FoundationFLFedAvg(
+            root_update=None,
+            min_fit_clients=1,
+            min_available_clients=1,
+        )
+        root = np.array([1.0, 2.0], dtype=np.float32)
+        strategy.set_root_update(root)
+        assert strategy._root_update is not None
+        np.testing.assert_array_equal(strategy._root_update, root)
 
 
 # ── Norm Verification (H4) ─────────────────────────────────────────────────
