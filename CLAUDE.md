@@ -169,10 +169,18 @@ python -m pytest tests/ -v
 
 Test-to-source mapping: see `tests/README.md`.
 
+## HPC Production
+
+- **Checkpointing**: `CheckpointManager` saves model parameters + metrics per round with atomic writes. Resumable via `--resume`.
+- **Metrics**: `MetricsCollector` + export to CSV/JSON/TensorBoard via `--metrics-dir`.
+- **gRPC security**: mTLS (`TLSConfig`, `load_tls_certificates`) and token auth (`TokenAuthConfig`) in `utils/grpc_auth.py`.
+- **Resources**: `ClientResources` + `ResourceConfig` for heterogeneous GPU/CPU allocation.
+- **SLURM example**: `examples/hpc/` with server/client job scripts, cert generation, monitoring.
+
 ## Security Model
 
 - Privacy guarantees: formal (ε,δ)-DP via PLD/PRV accounting
 - All DP costs composed (server DP + client DP-SGD + adaptive clip + SVT)
 - Byzantine robustness: Multi-Krum, Trimmed Mean, FoundationFL
 - Server-side norm verification prevents bypassing client-side clips
-- No authentication/rate-limiting on Flower gRPC (simulation only; add for production)
+- gRPC channel security: mTLS or token auth via `SFL_TLS_*` / `SFL_AUTH_TOKEN` env vars (see `utils/grpc_auth.py`)
