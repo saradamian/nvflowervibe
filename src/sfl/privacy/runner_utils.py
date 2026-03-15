@@ -222,6 +222,11 @@ def build_privacy_mods(args: argparse.Namespace) -> List[Any]:
 
     # ── Percentile Privacy ───────────────────────────────────────────
     if args.percentile_privacy is not None:
+        os.environ["SFL_PERCENTILE_PRIVACY"] = str(args.percentile_privacy)
+        os.environ["SFL_PERCENTILE_GAMMA"] = str(args.percentile_gamma)
+        os.environ["SFL_PERCENTILE_NOISE"] = str(args.percentile_noise)
+        os.environ["SFL_PERCENTILE_EPSILON"] = str(args.percentile_epsilon)
+        os.environ["SFL_PERCENTILE_DELTA"] = str(args.percentile_delta)
         from sfl.privacy.filters import make_percentile_privacy_mod
         client_mods.append(
             make_percentile_privacy_mod(
@@ -232,6 +237,11 @@ def build_privacy_mods(args: argparse.Namespace) -> List[Any]:
 
     # ── SVT Privacy ──────────────────────────────────────────────────
     if args.svt_privacy:
+        os.environ["SFL_SVT_PRIVACY"] = "true"
+        os.environ["SFL_SVT_FRACTION"] = str(args.svt_fraction)
+        os.environ["SFL_SVT_EPSILON"] = str(args.svt_epsilon)
+        os.environ["SFL_SVT_OPTIMAL"] = str(not args.svt_no_optimal).lower()
+        os.environ["SFL_SVT_PRESCREEN"] = str(args.svt_prescreen)
         from sfl.privacy.filters import make_svt_privacy_mod
         client_mods.append(
             make_svt_privacy_mod(
@@ -243,12 +253,19 @@ def build_privacy_mods(args: argparse.Namespace) -> List[Any]:
 
     # ── Exclude Layers ───────────────────────────────────────────────
     if args.exclude_layers:
+        os.environ["SFL_EXCLUDE_LAYERS"] = args.exclude_layers
         from sfl.privacy.filters import make_exclude_vars_mod
         indices = [int(x.strip()) for x in args.exclude_layers.split(",")]
         client_mods.append(make_exclude_vars_mod(exclude_indices=indices))
 
     # ── Gradient Compression ─────────────────────────────────────────
     if args.compress is not None:
+        os.environ["SFL_COMPRESS_RATIO"] = str(args.compress)
+        os.environ["SFL_COMPRESS_NOISE"] = str(args.compress_noise)
+        if args.compress_topk:
+            os.environ["SFL_COMPRESS_TOPK"] = "true"
+        if args.compress_error_feedback:
+            os.environ["SFL_COMPRESS_ERROR_FEEDBACK"] = "true"
         from sfl.privacy.filters import make_gradient_compression_mod
         client_mods.append(
             make_gradient_compression_mod(
@@ -261,6 +278,9 @@ def build_privacy_mods(args: argparse.Namespace) -> List[Any]:
 
     # ── Per-layer Clipping ───────────────────────────────────────────
     if args.per_layer_clip is not None:
+        os.environ["SFL_PER_LAYER_CLIP"] = str(args.per_layer_clip)
+        if args.per_layer_clip_map:
+            os.environ["SFL_PER_LAYER_CLIP_MAP"] = args.per_layer_clip_map
         from sfl.privacy.adaptive_clip import make_per_layer_clip_mod
         clip_map = None
         if args.per_layer_clip_map:
@@ -299,12 +319,17 @@ def build_privacy_mods(args: argparse.Namespace) -> List[Any]:
 
     # ── Partial Freezing ─────────────────────────────────────────────
     if args.freeze_layers is not None:
+        os.environ["SFL_FREEZE_LAYERS"] = args.freeze_layers
         from sfl.privacy.filters import make_partial_freeze_mod
         trainable = [int(x.strip()) for x in args.freeze_layers.split(",")]
         client_mods.append(make_partial_freeze_mod(trainable_indices=trainable))
 
     # ── SecAgg (must be last mod) ────────────────────────────────────
     if args.secagg:
+        os.environ["SFL_SECAGG_ENABLED"] = "true"
+        os.environ["SFL_SECAGG_SHARES"] = str(args.secagg_shares)
+        os.environ["SFL_SECAGG_THRESHOLD"] = str(args.secagg_threshold)
+        os.environ["SFL_SECAGG_CLIP"] = str(args.secagg_clip)
         from flwr.client.mod import secaggplus_mod
         client_mods.append(secaggplus_mod)
 

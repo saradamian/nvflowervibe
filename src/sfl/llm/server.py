@@ -8,8 +8,6 @@ When LoRA is enabled, the server initializes with LoRA adapter weights
 only, so the aggregation operates on the compact adapter parameter space.
 """
 
-import os
-
 from flwr.common import Context, ndarrays_to_parameters
 from flwr.server import ServerAppComponents, ServerConfig as FlowerServerConfig
 from flwr.server.strategy import FedAvg
@@ -77,29 +75,8 @@ def server_fn(context: Context) -> ServerAppComponents:
     )
 
     # Wrap with DP if configured (check run_config or env vars)
-    dp_enabled = (
-        str(run_config.get("dp-enabled", "false")).lower() == "true"
-        or os.environ.get("SFL_DP_ENABLED", "").lower() == "true"
-    )
-    if dp_enabled:
-        from sfl.privacy.dp import DPConfig, wrap_strategy_with_dp
-
-        dp_config = DPConfig(
-            noise_multiplier=float(
-                run_config.get("dp-noise-multiplier",
-                               os.environ.get("SFL_DP_NOISE", "0.1"))
-            ),
-            clipping_norm=float(
-                run_config.get("dp-clipping-norm",
-                               os.environ.get("SFL_DP_CLIP", "10.0"))
-            ),
-            num_sampled_clients=num_clients,
-            mode=str(
-                run_config.get("dp-mode",
-                               os.environ.get("SFL_DP_MODE", "server"))
-            ),
-        )
-        strategy = wrap_strategy_with_dp(strategy, dp_config)
+    from sfl.server.dp_setup import apply_dp_if_enabled
+    strategy = apply_dp_if_enabled(strategy, run_config, num_clients)
 
     config = FlowerServerConfig(num_rounds=num_rounds)
 
