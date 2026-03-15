@@ -5,7 +5,7 @@
 | Source Module | Test File | Notes |
 |---------------|-----------|-------|
 | `client/base.py` | `test_client.py` | Base client contract |
-| `client/inference.py` | `test_client.py` | Inference client contract |
+| `client/inference.py` | `test_extensibility.py` | BaseInferenceClient contract |
 | `client/dp_client.py` | `test_dpsgd.py` | Requires torch + opacus (slow) |
 | `server/strategy.py` | `test_integration.py` | Tested via end-to-end pipeline |
 | `server/robust.py` | `test_robust.py` | Multi-Krum, TrimmedMean, FoundationFL |
@@ -16,10 +16,10 @@
 | `privacy/audit.py` | `test_privacy.py` | PrivacyAuditor, pipeline audit |
 | `privacy/secagg.py` | `test_privacy.py` | SecAgg config validation |
 | `privacy/he.py` | `test_filters.py` | HE encrypt/decrypt (requires tenseal) |
-| `privacy/runner_utils.py` | `test_privacy.py` | Env var validation |
+| `privacy/runner_utils.py` | `test_runner_utils.py` | CLI args, mod building, env validation |
 | `esm2/*` | `test_esm2_*.py` | 5 files, all require torch (slow) |
 | `utils/config.py` | `test_config.py` | YAML + env + CLI config |
-| `utils/params.py` | `test_filters.py` | downcast/upcast utilities |
+| `utils/params.py` | `test_extensibility.py` | downcast/upcast utilities |
 
 ## Test Markers
 

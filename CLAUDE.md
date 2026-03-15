@@ -2,9 +2,11 @@
 
 ## Quick Orientation
 
-SFL is a federated learning framework (~5,600 lines source) with 14 composable privacy layers and 4 aggregation strategies. It runs on Flower + NVFlare.
+SFL is a privacy-preserving federated learning framework designed to federate compute resources across HPC centers with formal security guarantees — from hardware isolation (TEE/CVM) through cryptographic aggregation (SecAgg+) to differential privacy at the application layer.
 
-**The codebase is 75% model-agnostic.** ESM2 (protein model) and LLM (causal language model) are example applications — the privacy, aggregation, and client infrastructure work for any PyTorch model.
+It runs on **Flower** (FL protocol) + **NVFlare** (HPC orchestration), with ~14 composable privacy layers and 4 aggregation strategies. ESM2 (protein model) and LLM (causal language model) are **showcase applications** — the privacy, aggregation, and client infrastructure work for any PyTorch model.
+
+**The codebase is 75% model-agnostic.** Adding a new use case (e.g., vision transformers, multimodal inference) requires only implementing a client, model loader, and dataset — all privacy/security features work automatically.
 
 ## Architecture Map
 
@@ -48,12 +50,88 @@ src/sfl/
     └── params.py          # downcast/upcast for mixed-precision
 ```
 
-## How to Add a New Training Use Case
+## How to Add a New Use Case (Step-by-Step)
 
-1. Create `src/sfl/your_app/` with: `config.py`, `model.py`, `dataset.py`, `client.py`, `server.py`, `__init__.py`
-2. Your client extends `BaseFederatedClient` — implement `compute_update(parameters, config) -> (params, n, metrics)`
-3. Create `jobs/your_runner.py` — use `add_privacy_args(parser)` and `build_privacy_mods(args)` from `sfl.privacy.runner_utils` to get all privacy flags for free
-4. All privacy mods (DP, SVT, percentile, compression) work automatically — they operate on numpy arrays, not model objects
+Adding a new federated application (e.g., vision transformer training, multimodal inference) requires **5 files + 1 runner**. Copy from `src/sfl/llm/` as a template.
+
+### Step 1: Create your app module `src/sfl/your_app/`
+
+```python
+# config.py — Module-level config singleton (copy from llm/config.py)
+@dataclass
+class YourRunConfig:
+    federation: FederationConfig
+    model_name: str = "your-default-model"
+    # ... your app-specific fields
+
+_run_config: Optional[YourRunConfig] = None
+def set_run_config(cfg): global _run_config; _run_config = cfg
+def get_run_config(): return _run_config
+```
+
+```python
+# client.py — THE key file. Extend BaseFederatedClient.
+class YourClient(BaseFederatedClient):
+    def compute_update(self, parameters, config):
+        set_parameters(self.model, parameters)  # load global model
+        train(self.model, self.dataloader)       # your training loop
+        return get_parameters(self.model), len(self.dataset), {"loss": loss}
+```
+
+```python
+# model.py — load_model(), get_parameters(), set_parameters()
+# dataset.py — load data, partition across clients
+# server.py — server_fn() creates FedAvg with pretrained weights
+```
+
+```python
+# __init__.py — Wire Flower apps
+from sfl.your_app.client import client_fn
+from sfl.your_app.server import server_fn
+from flwr.client import ClientApp
+from flwr.server import ServerApp
+
+client_app = ClientApp(client_fn=client_fn)
+server_app = ServerApp(server_fn=server_fn)
+```
+
+### Step 2: Create your runner `jobs/your_runner.py`
+
+```python
+from sfl.privacy.runner_utils import add_privacy_args, build_privacy_mods, validate_env_vars
+
+def parse_args():
+    parser = argparse.ArgumentParser(...)
+    # Your app-specific args (model, dataset, hyperparams)
+    parser.add_argument("--model", ...)
+    # All privacy/security flags — ONE line:
+    add_privacy_args(parser)
+    return parser.parse_args()
+
+def run_flower(args, logger):
+    _set_your_config(args)
+    client_mods = build_privacy_mods(args)  # handles DP, SecAgg, filters, etc.
+    validate_env_vars()                     # fail-fast on misconfig
+    # ... standard Flower simulation setup (see llm_runner.py)
+```
+
+### Step 3: For inference instead of training
+
+Extend `BaseInferenceClient` instead of `BaseFederatedClient`:
+
+```python
+class YourInferenceClient(BaseInferenceClient):
+    def compute_predictions(self, parameters, config):
+        set_parameters(self.model, parameters)
+        predictions = self.model(self.data)
+        return predictions, len(self.data), {"accuracy": acc}
+```
+
+### What you DON'T need to touch
+
+- Privacy mods — they intercept Flower messages and transform numpy arrays. Model-agnostic.
+- SecAgg, DP accounting, Byzantine aggregation — all wired via CLI flags.
+- The `add_privacy_args()` call gives your runner 40+ privacy/security flags for free.
 
 ## Key Patterns
 
