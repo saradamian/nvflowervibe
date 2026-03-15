@@ -39,12 +39,14 @@ python jobs/esm2_runner.py \
 
 ```
 examples/hpc/
-├── README.md              # This file
-├── submit_server.sbatch   # SLURM job script for FL server
-├── submit_client.sbatch   # SLURM job script for FL clients
-├── launch_federation.sh   # One-command launcher for the full federation
-├── generate_certs.sh      # Generate mTLS certificates for secure channel
-└── monitor_training.sh    # Watch metrics and training progress
+├── README.md                # This file
+├── project.yml              # NVFlare provisioning config (customize hostnames)
+├── nvflare_distributed.py   # NVFlare cross-site deployment helper
+├── submit_server.sbatch     # SLURM job script for FL server
+├── submit_client.sbatch     # SLURM job script for FL clients
+├── launch_federation.sh     # One-command launcher for the full federation
+├── generate_certs.sh        # Generate mTLS certificates for secure channel
+└── monitor_training.sh      # Watch metrics and training progress
 ```
 
 ### Step 1: Generate TLS Certificates
@@ -154,6 +156,94 @@ This example assumes SLURM. For other schedulers:
 | SGE | `qsub` | `$PE_HOSTFILE` |
 
 Replace the SLURM-specific lines in the scripts with your scheduler's equivalents. The SFL framework itself is scheduler-agnostic — it only needs a network address to connect clients to the server.
+
+## NVFlare Cross-Site Deployment
+
+For production cross-site federations, NVFlare provides the orchestration layer — handling provisioning (TLS certs, identity), job lifecycle, site policies, and fault tolerance. Flower runs inside NVFlare.
+
+### Step 1: Customize `project.yml`
+
+Edit `examples/hpc/project.yml` with your actual hostnames:
+
+```yaml
+participants:
+  - name: server
+    type: server
+    org: sfl
+    host: your-server-hostname.example.com  # CUSTOMIZE
+
+  - name: site-local
+    type: client
+    org: sfl
+    host: my-workstation.local              # CUSTOMIZE
+
+  - name: site-hpc
+    type: client
+    org: sfl
+    host: login01.hpc.example.edu           # CUSTOMIZE
+```
+
+### Step 2: Provision Startup Kits
+
+```bash
+python examples/hpc/nvflare_distributed.py provision
+```
+
+This generates a startup kit per participant containing TLS certificates, authorization policies, and launch scripts.
+
+### Step 3: Distribute Kits to Sites
+
+```bash
+python examples/hpc/nvflare_distributed.py distribute \
+    --site-local localhost \
+    --site-hpc login01.hpc.example.edu
+```
+
+### Step 4: Launch NVFlare on Each Site
+
+```bash
+# On the server machine:
+python examples/hpc/nvflare_distributed.py launch --role server
+
+# On each client site:
+python examples/hpc/nvflare_distributed.py launch --role client --site site-hpc
+
+# Start admin console (for job submission):
+python examples/hpc/nvflare_distributed.py launch --role admin
+```
+
+### Step 5: Submit an SFL Job
+
+```bash
+# Package and submit ESM2 federated training
+python examples/hpc/nvflare_distributed.py submit-job \
+    --runner esm2 \
+    --num-rounds 50 \
+    --num-clients 2 \
+    --dp --dp-noise 0.5
+```
+
+### NVFlare + SLURM
+
+On HPC clusters, launch NVFlare participants as SLURM jobs:
+
+```bash
+# Server
+sbatch --wrap="python examples/hpc/nvflare_distributed.py launch --role server" \
+    --job-name=nvflare-server --time=8:00:00
+
+# Client (on each HPC site)
+sbatch --wrap="python examples/hpc/nvflare_distributed.py launch --role client --site site-hpc" \
+    --job-name=nvflare-client --gres=gpu:1 --time=8:00:00
+```
+
+### Why NVFlare + Flower?
+
+| Layer | Responsibility |
+|-------|---------------|
+| **NVFlare** | Provisioning, identity/TLS, job lifecycle, site policies, fault tolerance |
+| **Flower** | FL protocol (FedAvg, strategies), client/server communication, mods pipeline |
+| **SFL** | Privacy mods (DP, SecAgg, filters), robust aggregation, domain models (ESM2, LLM) |
 
 <!-- TODO: Add your center-specific details here:
   - Module loads (e.g., module load cuda/12.0)
