@@ -1,0 +1,94 @@
+## NVFlare Provisioning Configuration
+##
+## This file defines the participants in a cross-site federation.
+## Run `nvflare provision -p project.yml` to generate startup kits.
+##
+## CUSTOMIZE: Replace hostnames, ports, and organization names below.
+
+api_version: 3
+name: sfl-federation
+description: "SFL federated learning across HPC sites"
+
+participants:
+  # ── Overseer (optional, for HA) ──────────────────────────────────
+  # Uncomment for multi-overseer high-availability setup.
+  # - name: overseer
+  #   type: overseer
+  #   org: sfl
+  #   protocol: https
+  #   api_root: /api/v1
+  #   port: 8443
+
+  # ── FL Server ────────────────────────────────────────────────────
+  # CUSTOMIZE: Set to your server machine's hostname/IP.
+  - name: server
+    type: server
+    org: sfl
+    fed_learn_port: 8002       # gRPC port for FL communication
+    admin_port: 8003           # Admin console port
+    # CUSTOMIZE: Uncomment and set for remote access
+    # host: your-server-hostname.example.com
+
+  # ── FL Clients (one per HPC site) ────────────────────────────────
+  # CUSTOMIZE: Add one entry per participating site.
+  - name: site-local
+    type: client
+    org: sfl
+    # CUSTOMIZE: This machine's hostname (or leave blank for localhost)
+    # host: my-laptop.local
+
+  - name: site-hpc
+    type: client
+    org: sfl
+    # CUSTOMIZE: Your HPC cluster's login/compute node hostname
+    # host: login01.hpc.example.edu
+
+  # Add more sites as needed:
+  # - name: site-hpc-2
+  #   type: client
+  #   org: sfl
+  #   host: login01.other-hpc.edu
+
+  # ── Admin Console ────────────────────────────────────────────────
+  - name: admin@sfl
+    type: admin
+    org: sfl
+    role: project_admin
+
+builders:
+  # ── TLS/Certificate Configuration ────────────────────────────────
+  - path: nvflare.lighter.impl.cert.CertBuilder
+    args:
+      # Root CA — signs all participant certificates
+      root_cert:
+        subject:
+          org: sfl
+          name: "SFL Root CA"
+          role: root
+        # CUSTOMIZE: Increase for long-running federations
+        expiry: 365  # days
+
+  # ── Startup Script Builder ───────────────────────────────────────
+  - path: nvflare.lighter.impl.static_file.StaticFileBuilder
+    args:
+      config_folder: config
+      overseer_agent:
+        path: nvflare.ha.dummy_overseer_agent.DummyOverseerAgent
+        args:
+          sp_end_point: "localhost:8002:8003"
+          heartbeat_interval: 6
+
+  # ── Authorization Policies ───────────────────────────────────────
+  - path: nvflare.lighter.impl.auth.AuthPolicyBuilder
+    args:
+      orgs:
+        sfl:
+          - project_admin
+      roles:
+        project_admin:
+          - submit_job
+          - clone_job
+          - manage_job
+          - download_job
+          - view
+          - operate
