@@ -356,6 +356,56 @@ class TestPRVAccountant:
         assert acc.epsilon_bounds is None
 
 
+class TestComposeAuxiliary:
+    """Tests for compose_auxiliary (adaptive composition accounting)."""
+
+    def test_auxiliary_event_increases_epsilon(self):
+        """Composing an auxiliary event should increase total ε."""
+        from dp_accounting import dp_event
+
+        acc = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, enforce_budget=False,
+            backend="pld",
+        )
+        acc.step()
+        eps_before = acc.epsilon
+
+        # Compose an auxiliary Gaussian event (e.g., quantile estimation)
+        acc.compose_auxiliary(dp_event.GaussianDpEvent(noise_multiplier=0.5))
+        eps_after = acc.epsilon
+
+        assert eps_after > eps_before
+
+    def test_auxiliary_prv_raises(self):
+        """PRV backend should reject compose_auxiliary."""
+        acc = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, enforce_budget=False,
+            backend="prv",
+        )
+        from dp_accounting import dp_event
+        with pytest.raises(RuntimeError, match="PLD backend"):
+            acc.compose_auxiliary(dp_event.GaussianDpEvent(noise_multiplier=1.0))
+
+    def test_multiple_auxiliary_events_compose(self):
+        """Multiple auxiliary events should accumulate in the budget."""
+        from dp_accounting import dp_event
+
+        acc = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, enforce_budget=False,
+            backend="pld",
+        )
+        acc.step()
+        eps_1 = acc.epsilon
+
+        acc.compose_auxiliary(dp_event.GaussianDpEvent(noise_multiplier=0.5))
+        eps_2 = acc.epsilon
+
+        acc.compose_auxiliary(dp_event.GaussianDpEvent(noise_multiplier=0.5))
+        eps_3 = acc.epsilon
+
+        assert eps_1 < eps_2 < eps_3
+
+
 class TestShuffleAmplification:
     """Tests for shuffle-model DP amplification."""
 

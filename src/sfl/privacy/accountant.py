@@ -307,6 +307,40 @@ class PrivacyAccountant:
         """Active accounting backend name."""
         return self._backend
 
+    def compose_auxiliary(self, event) -> None:
+        """Compose an auxiliary DP event into the running budget.
+
+        Use this to account for privacy costs of adaptive mechanisms
+        that run alongside the main gradient mechanism, such as:
+
+        - Adaptive clipping quantile estimation (GaussianDpEvent)
+        - SVT parameter selection (LaplaceDpEvent)
+
+        These costs are composed via ``ComposedDpEvent`` (which handles
+        adaptive composition per Dwork et al. 2010) rather than
+        advanced composition, giving correct accounting even when
+        the auxiliary mechanism's output influences the next round's
+        main mechanism.
+
+        Args:
+            event: A ``dp_accounting.dp_event.DpEvent`` instance.
+
+        Raises:
+            RuntimeError: If using the PRV backend (which doesn't
+                support arbitrary event composition).
+        """
+        if self._backend == "prv":
+            raise RuntimeError(
+                "compose_auxiliary is only supported with the PLD backend. "
+                "PRV accountant does not support arbitrary event composition."
+            )
+        self._accountant.compose(event)
+        logger.info(
+            "Composed auxiliary DP event: %s | ε = %.4f",
+            type(event).__name__,
+            self._accountant.get_epsilon(self._delta),
+        )
+
     def compute_epsilon_for_rounds(self, num_rounds: int) -> float:
         """Predict ε for a given number of rounds (without advancing state).
 
@@ -324,7 +358,7 @@ class PrivacyAccountant:
             acc = _PRVAccountant(
                 prvs=[self._prv_mechanism],
                 max_self_compositions=[max_comp],
-                eps_error=0.1,
+                eps_error=self._eps_error,
                 delta_error=self._delta * 1e-3,
             )
             _, est, _ = acc.compute_epsilon(
