@@ -13,7 +13,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 # Type aliases for clarity
-Parameters = List[NDArray[np.float32]]
+Parameters = List[NDArray[np.floating]]
 Metrics = Dict[str, Any]
 Config = Dict[str, Any]
 ClientUpdate = Tuple[Parameters, int, Metrics]

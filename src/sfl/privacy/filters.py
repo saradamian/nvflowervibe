@@ -739,6 +739,110 @@ def make_partial_freeze_mod(
     return partial_freeze_mod
 
 
+# ── Adapter-Aware Privacy (LoRA) ───────────────────────────────────────────
+
+
+def make_adapter_mask_mod(
+    adapter_indices: Optional[List[int]] = None,
+    adapter_pattern: Optional[str] = None,
+    param_names: Optional[List[str]] = None,
+) -> Callable[[Message, Context, ClientAppCallable], Message]:
+    """Create a Flower client mod that masks non-adapter parameters.
+
+    When fine-tuning large models via LoRA or other parameter-efficient
+    methods, only adapter weights should pass through DP/SecAgg. This
+    mod zeros out all non-adapter parameters, ensuring only adapter
+    weights are transmitted and privacy-protected.
+
+    Supports two modes:
+
+    1. **By index** (``adapter_indices``): Explicit list of parameter
+       indices that are adapter weights.
+
+    2. **By name pattern** (``adapter_pattern`` + ``param_names``):
+       Regex pattern matched against parameter names. Default pattern
+       ``lora_`` matches standard LoRA adapter naming.
+
+    Args:
+        adapter_indices: List of parameter indices that are adapter
+            weights. If None, uses pattern matching.
+        adapter_pattern: Regex pattern to identify adapter parameters
+            by name (default: ``"lora_"``). Requires ``param_names``.
+        param_names: List of parameter names from the model. Required
+            when using ``adapter_pattern``.
+
+    Returns:
+        A Flower client mod that zeros non-adapter parameters.
+
+    Example:
+        .. code-block:: python
+
+            # By name pattern (recommended)
+            names = list(model.state_dict().keys())
+            mod = make_adapter_mask_mod(
+                adapter_pattern="lora_",
+                param_names=names,
+            )
+
+            # By explicit index
+            mod = make_adapter_mask_mod(adapter_indices=[10, 11, 14, 15])
+    """
+    import re
+
+    _adapter_set: set = set()
+
+    if adapter_indices is not None:
+        _adapter_set = set(adapter_indices)
+    elif adapter_pattern and param_names:
+        pattern = re.compile(adapter_pattern)
+        _adapter_set = {
+            i for i, name in enumerate(param_names) if pattern.search(name)
+        }
+        log(INFO,
+            "adapter_mask: matched %d/%d parameters as adapters (pattern=%r)",
+            len(_adapter_set), len(param_names), adapter_pattern)
+    elif adapter_pattern and not param_names:
+        log(WARNING,
+            "adapter_pattern=%r provided without param_names — cannot "
+            "identify adapters. Pass param_names=list(model.state_dict().keys()).",
+            adapter_pattern)
+
+    def adapter_mask_mod(
+        msg: Message, ctxt: Context, call_next: ClientAppCallable,
+    ) -> Message:
+        if msg.metadata.message_type != MessageType.TRAIN:
+            return call_next(msg, ctxt)
+
+        out_msg = call_next(msg, ctxt)
+        if out_msg.has_error():
+            return out_msg
+
+        if not _adapter_set:
+            return out_msg
+
+        fit_res = compat.recorddict_to_fitres(out_msg.content, keep_input=True)
+        params = parameters_to_ndarrays(fit_res.parameters)
+
+        masked = []
+        n_kept = 0
+        for i, p in enumerate(params):
+            if i in _adapter_set:
+                masked.append(p)
+                n_kept += 1
+            else:
+                masked.append(np.zeros_like(p))
+
+        log(INFO,
+            "adapter_mask: kept %d/%d params (adapter only), zeroed %d base params",
+            n_kept, len(params), len(params) - n_kept)
+
+        fit_res.parameters = ndarrays_to_parameters(masked)
+        out_msg.content = compat.fitres_to_recorddict(fit_res, keep_input=True)
+        return out_msg
+
+    return adapter_mask_mod
+
+
 def make_partial_freeze_strategy(
     strategy,
     trainable_indices: List[int],

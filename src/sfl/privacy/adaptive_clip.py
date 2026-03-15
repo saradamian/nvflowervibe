@@ -179,7 +179,9 @@ class AdaptiveClipWrapper(Strategy):
 
 def make_per_layer_clip_mod(
     clip_norms: Optional[Dict[int, float]] = None,
+    clip_patterns: Optional[Dict[str, float]] = None,
     default_clip: float = 1.0,
+    param_names: Optional[List[str]] = None,
 ) -> "Callable":
     """Create a Flower client mod that clips each parameter layer independently.
 
@@ -192,14 +194,30 @@ def make_per_layer_clip_mod(
     The total update is the concatenation of per-layer clipped tensors,
     so the overall L2 sensitivity is sqrt(sum of clip_i^2).
 
+    Supports two modes for specifying per-layer clips:
+
+    1. **By index** (``clip_norms``): Dict mapping parameter index → clip.
+       Fragile — adding/removing layers shifts all indices.
+
+    2. **By name pattern** (``clip_patterns`` + ``param_names``): Dict
+       mapping regex pattern → clip. Each parameter name is tested against
+       all patterns; the first match wins. Robust across architectures.
+
     Args:
         clip_norms: Dict mapping parameter index → L2 clip norm.
-            If None, all layers use ``default_clip``.
-        default_clip: Default per-layer clip for layers not in ``clip_norms``.
+        clip_patterns: Dict mapping regex pattern → L2 clip norm.
+            Patterns are matched against ``param_names`` using
+            ``re.search``. First match wins. Examples:
+            ``{"embed": 5.0, "attention": 1.0, "lm_head": 3.0}``.
+        default_clip: Default per-layer clip for unmatched layers.
+        param_names: List of parameter names (from ``model.state_dict().keys()``).
+            Required when using ``clip_patterns``. Pass once at setup time.
 
     Returns:
         A Flower client mod (callable).
     """
+    import re
+
     from flwr.client.typing import ClientAppCallable
     from flwr.common import (
         ndarrays_to_parameters,
@@ -211,6 +229,21 @@ def make_per_layer_clip_mod(
     from flwr.common.message import Message
 
     _clip_norms = clip_norms or {}
+
+    # Pre-compute index-based clips from name patterns
+    if clip_patterns and param_names:
+        compiled = [(re.compile(pat), clip) for pat, clip in clip_patterns.items()]
+        for i, name in enumerate(param_names):
+            if i not in _clip_norms:  # index-based takes precedence
+                for pattern, clip in compiled:
+                    if pattern.search(name):
+                        _clip_norms[i] = clip
+                        break
+    elif clip_patterns and not param_names:
+        logger.warning(
+            "clip_patterns provided without param_names — patterns will be "
+            "ignored. Pass param_names=list(model.state_dict().keys())."
+        )
 
     def per_layer_clip_mod(
         msg: Message, ctxt: Context, call_next: ClientAppCallable,

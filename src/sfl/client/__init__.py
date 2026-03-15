@@ -7,6 +7,7 @@ can be easily added by inheriting from BaseFederatedClient.
 """
 
 from sfl.client.base import BaseFederatedClient
+from sfl.client.inference import BaseInferenceClient, InferenceResult
 from sfl.client.sum_client import SumClient, client_fn
 
 # Flower ClientApp for NVFlare integration
@@ -17,6 +18,8 @@ app = ClientApp(client_fn=client_fn)
 
 __all__ = [
     "BaseFederatedClient",
+    "BaseInferenceClient",
+    "InferenceResult",
     "SumClient",
     "client_fn",
     "app",

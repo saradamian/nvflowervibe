@@ -422,10 +422,15 @@ by only scoring the top half of parameters by absolute value.
 fit metrics and emits a warning when acceptance drops below expected
 levels, helping diagnose utility degradation.
 
-### ExcludeVars (Layer Exclusion)
+### ExcludeVars (Communication Optimization)
 
-Zeros out entire model layers before sending to the server. Useful for
-keeping sensitive components (embeddings, classifier heads) private.
+> **Not a privacy mechanism.** ExcludeVars zeros out layers but
+> gradient flow through downstream layers leaks information about
+> "excluded" layers. Use DP or SecAgg for formal guarantees.
+
+Zeros out entire model layers before sending to the server. Reduces
+bandwidth and limits direct exposure of sensitive components
+(embeddings, classifier heads), but does NOT prevent indirect leakage.
 
 ```bash
 # Exclude ESM2 embedding layers (indices 0 and 1)
@@ -534,7 +539,12 @@ This reduces SecAgg overhead from O(P) to O(lambda * P), where lambda is
 the fraction of trainable parameters. For ESM2 with only the last few
 layers unfrozen, this can be a 90%+ reduction in SecAgg cost.
 
-### Homomorphic Encryption (HE)
+### Homomorphic Encryption (HE) — Demo Only
+
+> **Demo-scale only.** HE is impractical for real deep learning models
+> (ESM2 at 8M params would produce ~1.3TB of ciphertext per client per
+> round). Use DP + SecAgg for production privacy. HE is included to
+> demonstrate the concept for small-parameter tasks like the sum demo.
 
 HE allows the server to aggregate encrypted model updates without ever
 seeing plaintext values. SFL provides a TenSEAL CKKS implementation.
@@ -911,3 +921,41 @@ python jobs/esm2_runner.py \
 | `--compress 0.1 --compress-topk` | Low-moderate | High | Communication efficiency |
 | `--aggregation krum` | Byzantine-robust | High | Adversarial settings |
 | Full stack (DP + filters + exclude) | Very strong | Lower | Regulatory compliance |
+
+---
+
+## Known Limitations
+
+### No Authentication or Rate-Limiting on gRPC
+
+Flower's gRPC channel has no built-in authentication or rate-limiting.
+In simulation mode this is irrelevant, but in multi-machine deployments
+a malicious client could:
+
+- Flood the server with connection requests (DoS)
+- Impersonate a legitimate client (no mutual TLS in simulation)
+- Send oversized updates to consume server memory
+
+**Mitigations for production:**
+
+1. Use NVFlare provisioning (Mode 3/4) which adds TLS + mutual auth
+2. Deploy behind a reverse proxy with rate-limiting (nginx, envoy)
+3. Use `verify_update_norms()` server-side to reject oversized updates
+4. Set `min_available_clients` to reject connections beyond expected count
+
+This is an infrastructure concern, not an application-level fix.
+See [docs/DEPLOYMENT.md](DEPLOYMENT.md) for production deployment guidance.
+
+### ExcludeVars Is Not Private
+
+`ExcludeVars` zeros parameter layers but does NOT prevent information
+leakage through gradient flow in downstream layers. It should be treated
+as a **communication optimization**, not a privacy mechanism. Combine
+with DP for formal guarantees.
+
+### HE Is Demo-Scale Only
+
+TenSEAL CKKS encryption expands each float32 to ~160KB of ciphertext.
+For ESM2 (8M params = 32MB), this would produce ~1.3TB per client per
+round. HE is included for educational purposes and small-parameter
+demos. Use DP + SecAgg for production-scale privacy.

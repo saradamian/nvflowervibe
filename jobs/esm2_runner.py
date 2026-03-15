@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from sfl.utils.logging import setup_logging, get_logger
 from sfl.types import LoggingConfig
+from sfl.privacy.runner_utils import add_privacy_args, build_privacy_mods, validate_env_vars
 
 
 def parse_args() -> argparse.Namespace:
@@ -86,121 +87,8 @@ Examples:
                         choices=["flower", "nvflare"],
                         help="Simulation backend (default: flower)")
 
-    # Privacy
-    parser.add_argument("--dp", action="store_true",
-                        help="Enable differential privacy")
-    parser.add_argument("--dp-noise", type=float, default=1.0,
-                        help="DP noise multiplier (default: 1.0)")
-    parser.add_argument("--dp-clip", type=float, default=10.0,
-                        help="DP clipping norm (default: 10.0)")
-    parser.add_argument("--dp-mode", type=str, default="server",
-                        choices=["server", "client"],
-                        help="DP mode: server-side or client-side (default: server)")
-    parser.add_argument("--dp-delta", type=float, default=1e-5,
-                        help="DP target delta for privacy accounting (default: 1e-5)")
-    parser.add_argument("--dp-max-epsilon", type=float, default=10.0,
-                        help="DP budget cap — stop training when epsilon exceeds this (default: 10.0)")
-    parser.add_argument("--dp-adaptive-clip", action="store_true",
-                        help="Enable adaptive clipping norm (Andrew et al. 2021)")
-    parser.add_argument("--dp-target-quantile", type=float, default=0.5,
-                        help="Target unclipped fraction for adaptive clipping (default: 0.5)")
-    parser.add_argument("--dp-clip-lr", type=float, default=0.2,
-                        help="Learning rate for adaptive clip norm update (default: 0.2)")
-    parser.add_argument("--dp-quantile-noise", type=float, default=None,
-                        help="Noise multiplier for private quantile tracking in adaptive "
-                             "clipping (default: 0.1 when adaptive clipping enabled, "
-                             "0 otherwise). Set to 0 for non-private (testing only).")
-    parser.add_argument("--dp-accounting-backend", type=str, default="pld",
-                        choices=["pld", "prv"],
-                        help="Privacy accounting backend: pld (Google, default) or "
-                             "prv (Microsoft, with error bounds)")
-    parser.add_argument("--dp-shuffle", action="store_true",
-                        help="Enable shuffle-model DP amplification (assumes anonymous channel)")
-
-    # Privacy filters
-    parser.add_argument("--percentile-privacy", type=int, default=None, metavar="PCT",
-                        help="Enable percentile privacy: only share top PCT%% of diffs")
-    parser.add_argument("--percentile-gamma", type=float, default=0.01,
-                        help="Clipping bound for percentile privacy (default: 0.01)")
-    parser.add_argument("--percentile-noise", type=float, default=0.0,
-                        help="Gaussian noise scale for percentile privacy (default: 0, no noise)")
-    parser.add_argument("--percentile-epsilon", type=float, default=0.0,
-                        help="Calibrate percentile noise to this ε (overrides --percentile-noise)")
-    parser.add_argument("--percentile-delta", type=float, default=1e-5,
-                        help="δ for percentile noise calibration (default: 1e-5)")
-    parser.add_argument("--svt-privacy", action="store_true",
-                        help="Enable SVT (Sparse Vector Technique) differential privacy")
-    parser.add_argument("--svt-epsilon", type=float, default=0.1,
-                        help="SVT privacy budget epsilon (default: 0.1)")
-    parser.add_argument("--svt-fraction", type=float, default=0.1,
-                        help="SVT fraction of params to upload (default: 0.1)")
-    parser.add_argument("--svt-no-optimal", action="store_true",
-                        help="Use standard ε/2 + ε/(2c) budget split instead of optimal")
-    parser.add_argument("--svt-prescreen", type=float, default=1.0,
-                        help="Pre-screen ratio: run SVT on top X%% by magnitude (default: 1.0)")
-    parser.add_argument("--exclude-layers", type=str, default=None,
-                        help="Comma-separated parameter indices to exclude (e.g. '0,1')")
-
-    # Gradient compression
-    parser.add_argument("--compress", type=float, default=None, metavar="RATIO",
-                        help="Gradient compression: keep this fraction of values (e.g. 0.1)")
-    parser.add_argument("--compress-noise", type=float, default=0.01,
-                        help="Noise scale for compressed gradients (default: 0.01)")
-    parser.add_argument("--compress-topk", action="store_true",
-                        help="Use deterministic TopK instead of random masking")
-    parser.add_argument("--compress-error-feedback", action="store_true",
-                        help="Enable error feedback: accumulate compression residuals across rounds")
-
-    # Partial freezing (Lambda-SecAgg)
-    parser.add_argument("--freeze-layers", type=str, default=None,
-                        help="Comma-separated trainable layer indices (e.g. '4,5,6'). "
-                             "Frozen layers stripped from updates before SecAgg.")
-
-    # Per-layer clipping
-    parser.add_argument("--per-layer-clip", type=float, default=None, metavar="NORM",
-                        help="Enable per-layer clipping with this default L2 norm per layer "
-                             "(Yu et al., ICLR 2022)")
-    parser.add_argument("--per-layer-clip-map", type=str, default=None,
-                        help="JSON mapping of layer index → clip norm, e.g. '{\"0\": 5.0}'")
-
-    # Secure Aggregation
-    parser.add_argument("--secagg", action="store_true",
-                        help="Enable SecAgg+ (secure aggregation)")
-    parser.add_argument("--secagg-shares", type=int, default=3,
-                        help="SecAgg+ number of secret shares per client (default: 3)")
-    parser.add_argument("--secagg-threshold", type=int, default=2,
-                        help="SecAgg+ reconstruction threshold (default: 2)")
-    parser.add_argument("--secagg-clip", type=float, default=8.0,
-                        help="SecAgg+ clipping range (default: 8.0)")
-
-    # Aggregation strategy
-    parser.add_argument("--aggregation", type=str, default="fedavg",
-                        choices=["fedavg", "krum", "trimmed-mean", "foundation-fl"],
-                        help="Aggregation strategy (default: fedavg)")
-    parser.add_argument("--krum-byzantine", type=int, default=1,
-                        help="Expected number of Byzantine clients for Multi-Krum (default: 1)")
-    parser.add_argument("--trim-ratio", type=float, default=0.1,
-                        help="Fraction to trim per side for trimmed-mean (default: 0.1)")
-    parser.add_argument("--ffl-threshold", type=float, default=0.1,
-                        help="FoundationFL trust threshold — min cosine similarity (default: 0.1)")
-    parser.add_argument("--ffl-no-weighted", action="store_true",
-                        help="Disable trust-weighted averaging in FoundationFL")
-
-    # Per-example DP-SGD (Opacus)
-    parser.add_argument("--dpsgd", action="store_true",
-                        help="Enable per-example DP-SGD via Opacus")
-    parser.add_argument("--dpsgd-clip", type=float, default=1.0,
-                        help="Per-example gradient clip norm (default: 1.0)")
-    parser.add_argument("--dpsgd-noise", type=float, default=1.0,
-                        help="Noise multiplier for DP-SGD (default: 1.0)")
-    parser.add_argument("--dpsgd-delta", type=float, default=1e-5,
-                        help="Delta for per-example DP accounting (default: 1e-5)")
-    parser.add_argument("--dpsgd-autoclip", action="store_true",
-                        help="Enable AutoClip (Li et al. 2023): normalize per-example "
-                             "gradients to unit norm, eliminating clipping norm tuning")
-    parser.add_argument("--dpsgd-ghost", action="store_true",
-                        help="Enable Ghost Clipping: memory-efficient two-pass DP-SGD "
-                             "(reduces memory from O(B*P) to O(B+P))")
+    # All privacy/security flags (DP, filters, SecAgg, aggregation, DP-SGD)
+    add_privacy_args(parser)
 
     return parser.parse_args()
 
@@ -259,107 +147,14 @@ def run_flower(args: argparse.Namespace, logger) -> int:
     # Store config so client_fn/server_fn can read it
     _set_esm2_config(args)
 
-    client_app = ClientApp(client_fn=client_fn)
-
-    # Build client mods for privacy
-    client_mods = []
-    if args.dp:
-        import os
-        os.environ["SFL_DP_ENABLED"] = "true"
-        os.environ["SFL_DP_NOISE"] = str(args.dp_noise)
-        os.environ["SFL_DP_CLIP"] = str(args.dp_clip)
-        os.environ["SFL_DP_MODE"] = args.dp_mode
-        os.environ["SFL_DP_DELTA"] = str(args.dp_delta)
-        os.environ["SFL_DP_MAX_EPSILON"] = str(args.dp_max_epsilon)
-        if args.dp_adaptive_clip:
-            os.environ["SFL_DP_ADAPTIVE_CLIP"] = "true"
-            os.environ["SFL_DP_TARGET_QUANTILE"] = str(args.dp_target_quantile)
-            os.environ["SFL_DP_CLIP_LR"] = str(args.dp_clip_lr)
-            # Default to private quantile tracking (0.1) unless explicitly set
-            quantile_noise = args.dp_quantile_noise if args.dp_quantile_noise is not None else 0.1
-            os.environ["SFL_DP_QUANTILE_NOISE"] = str(quantile_noise)
-
-        os.environ["SFL_DP_ACCOUNTING_BACKEND"] = args.dp_accounting_backend
-        if args.dp_shuffle:
-            os.environ["SFL_DP_SHUFFLE"] = "true"
-
-        if args.dp_mode == "client":
-            from flwr.client.mod import fixedclipping_mod
-            client_mods.append(fixedclipping_mod)
-
-    if args.percentile_privacy is not None:
-        from sfl.privacy.filters import make_percentile_privacy_mod
-        client_mods.append(
-            make_percentile_privacy_mod(
-                args.percentile_privacy, args.percentile_gamma, args.percentile_noise,
-                epsilon=args.percentile_epsilon, delta=args.percentile_delta,
-            )
-        )
-    if args.svt_privacy:
-        from sfl.privacy.filters import make_svt_privacy_mod
-        client_mods.append(
-            make_svt_privacy_mod(
-                fraction=args.svt_fraction, epsilon=args.svt_epsilon,
-                optimal_budget=not args.svt_no_optimal,
-                pre_screen_ratio=args.svt_prescreen,
-            )
-        )
-    if args.exclude_layers:
-        from sfl.privacy.filters import make_exclude_vars_mod
-        indices = [int(x.strip()) for x in args.exclude_layers.split(",")]
-        client_mods.append(make_exclude_vars_mod(exclude_indices=indices))
-    if args.compress is not None:
-        from sfl.privacy.filters import make_gradient_compression_mod
-        client_mods.append(
-            make_gradient_compression_mod(
-                compression_ratio=args.compress,
-                noise_scale=args.compress_noise,
-                use_random_mask=not args.compress_topk,
-                error_feedback=args.compress_error_feedback,
-            )
-        )
-    if args.per_layer_clip is not None:
-        import json
-        from sfl.privacy.adaptive_clip import make_per_layer_clip_mod
-        clip_map = None
-        if args.per_layer_clip_map:
-            clip_map = {int(k): v for k, v in json.loads(args.per_layer_clip_map).items()}
-        client_mods.append(
-            make_per_layer_clip_mod(
-                clip_norms=clip_map,
-                default_clip=args.per_layer_clip,
-            )
-        )
-    # Aggregation strategy
-    os.environ["SFL_AGGREGATION"] = args.aggregation
-    if args.aggregation == "krum":
-        os.environ["SFL_KRUM_BYZANTINE"] = str(args.krum_byzantine)
-    elif args.aggregation == "trimmed-mean":
-        os.environ["SFL_TRIM_RATIO"] = str(args.trim_ratio)
-        os.environ["SFL_FFL_THRESHOLD"] = str(args.ffl_threshold)
-        os.environ["SFL_FFL_WEIGHTED"] = str(not args.ffl_no_weighted).lower()
-
-    # Per-example DP-SGD
-    if args.dpsgd:
-        os.environ["SFL_DPSGD_ENABLED"] = "true"
-        os.environ["SFL_DPSGD_CLIP"] = str(args.dpsgd_clip)
-        os.environ["SFL_DPSGD_NOISE"] = str(args.dpsgd_noise)
-        os.environ["SFL_DPSGD_DELTA"] = str(args.dpsgd_delta)
-        if args.dpsgd_autoclip:
-            os.environ["SFL_DPSGD_AUTOCLIP"] = "true"
-        if args.dpsgd_ghost:
-            os.environ["SFL_DPSGD_GHOST"] = "true"
-
-    if args.freeze_layers is not None:
-        from sfl.privacy.filters import make_partial_freeze_mod
-        trainable = [int(x.strip()) for x in args.freeze_layers.split(",")]
-        client_mods.append(make_partial_freeze_mod(trainable_indices=trainable))
-    if args.secagg:
-        from flwr.client.mod import secaggplus_mod
-        client_mods.append(secaggplus_mod)
+    # Build client mods for privacy (sets SFL_* env vars + returns mod list)
+    client_mods = build_privacy_mods(args)
+    validate_env_vars()
 
     if client_mods:
         client_app = ClientApp(client_fn=client_fn, mods=client_mods)
+    else:
+        client_app = ClientApp(client_fn=client_fn)
 
     if args.secagg:
         from sfl.privacy.secagg import SecAggConfig, make_secagg_main

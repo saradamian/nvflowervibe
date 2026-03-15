@@ -31,6 +31,7 @@ from sfl.privacy.filters import (
     make_gradient_compression_mod,
     make_partial_freeze_mod,
     make_partial_freeze_strategy,
+    make_adapter_mask_mod,
     PercentilePrivacyConfig,
     SVTPrivacyConfig,
     GradientCompressionConfig,
@@ -52,6 +53,9 @@ except ImportError:
 
 # Privacy auditing (no extra deps)
 from sfl.privacy.audit import PrivacyAuditor, AuditResult
+
+# Runner utilities (shared arg-parsing and mod building)
+from sfl.privacy.runner_utils import add_privacy_args, build_privacy_mods, validate_env_vars
 
 # Optional: homomorphic encryption (requires tenseal)
 try:
@@ -77,6 +81,7 @@ __all__ = [
     "GradientCompressionConfig",
     "make_partial_freeze_mod",
     "make_partial_freeze_strategy",
+    "make_adapter_mask_mod",
     "PrivacyAccountant",
     "AccountingConfig",
     "BudgetExhaustedError",
@@ -87,4 +92,7 @@ __all__ = [
     "HEConfig",
     "PrivacyAuditor",
     "AuditResult",
+    "add_privacy_args",
+    "build_privacy_mods",
+    "validate_env_vars",
 ]
