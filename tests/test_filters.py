@@ -786,6 +786,68 @@ class TestPercentileSensitivity:
         assert r_many[0].shape == (100,)
 
 
+# ── Adaptive K / Fixed K Tests (S1) ──────────────────────────────────────
+
+
+class TestPercentileAdaptiveK:
+    """Tests for adaptive K budget splitting (S1)."""
+
+    @pytest.mark.skipif(not _has_dp_accounting, reason="dp-accounting not installed")
+    def test_fixed_k_uses_full_epsilon(self):
+        """With fixed_k, full epsilon should go to noise (no selection cost)."""
+        params = [np.random.randn(100).astype(np.float32)]
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_percentile_privacy_mod(
+            percentile=50, gamma=1.0, epsilon=1.0, delta=1e-5, fixed_k=50,
+        )
+        result = mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg))
+        result_params = _extract_params(result)
+        assert result_params[0].shape == (100,)
+
+    @pytest.mark.skipif(not _has_dp_accounting, reason="dp-accounting not installed")
+    def test_adaptive_k_splits_epsilon(self):
+        """Without fixed_k, epsilon is split for selection + noise."""
+        params = [np.random.randn(100).astype(np.float32)]
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_percentile_privacy_mod(
+            percentile=50, gamma=1.0, epsilon=1.0, delta=1e-5,
+        )
+        result = mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg))
+        fit_res = compat.recorddict_to_fitres(result.content, keep_input=True)
+        # Should store K in metrics
+        assert "percentile_k" in fit_res.metrics
+        assert fit_res.metrics["percentile_k_adaptive"] is True
+
+    @pytest.mark.skipif(not _has_dp_accounting, reason="dp-accounting not installed")
+    def test_fixed_k_clamps_survivors(self):
+        """When actual survivors exceed fixed_k, extras are randomly dropped."""
+        # All values are large — most will survive percentile=10
+        params = [np.ones(100, dtype=np.float32) * 10.0]
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_percentile_privacy_mod(
+            percentile=10, gamma=20.0, epsilon=1.0, delta=1e-5, fixed_k=5,
+        )
+        result = mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg))
+        fit_res = compat.recorddict_to_fitres(result.content, keep_input=True)
+        assert fit_res.metrics["percentile_k"] == 5
+
+    def test_fixed_k_metrics_stored(self):
+        """K and adaptive flag should be stored in metrics."""
+        params = [np.ones(50, dtype=np.float32)]
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_percentile_privacy_mod(
+            percentile=50, gamma=1.0, fixed_k=25,
+        )
+        result = mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg))
+        fit_res = compat.recorddict_to_fitres(result.content, keep_input=True)
+        assert fit_res.metrics["percentile_k"] == 25
+        assert fit_res.metrics["percentile_k_adaptive"] is False
+
+
 # ── Partial Freeze (Lambda-SecAgg) Tests ──────────────────────────────────
 
 

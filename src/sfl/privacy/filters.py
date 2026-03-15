@@ -63,12 +63,19 @@ class PercentilePrivacyConfig:
             guarantee via the analytic Gaussian mechanism
             (Balle & Wang 2018). Overrides noise_scale.
         delta: Target δ for (ε,δ)-DP (used with epsilon).
+        fixed_k: Fix the number of surviving elements to this value.
+            When set, the sensitivity (gamma * sqrt(fixed_k)) is
+            data-independent and the DP guarantee is clean. When
+            None (default), K is data-dependent — the selection is
+            an adaptive mechanism whose cost is accounted for by
+            splitting epsilon between selection (ε/3) and noise (2ε/3).
     """
     percentile: int = 10
     gamma: float = 0.01
     noise_scale: float = 0.0
     epsilon: float = 0.0
     delta: float = 1e-5
+    fixed_k: Optional[int] = None
 
 
 def make_percentile_privacy_mod(
@@ -77,6 +84,7 @@ def make_percentile_privacy_mod(
     noise_scale: float = 0.0,
     epsilon: float = 0.0,
     delta: float = 1e-5,
+    fixed_k: Optional[int] = None,
 ) -> Callable[[Message, Context, ClientAppCallable], Message]:
     """Create a Flower client mod that applies percentile privacy.
 
@@ -88,20 +96,42 @@ def make_percentile_privacy_mod(
     (ε,δ)-DP guarantee via the Gaussian mechanism. When only
     ``noise_scale > 0`` is provided, uncalibrated noise is added
     with a warning. With neither, this is bandwidth reduction only.
+
+    **Adaptive K accounting (S1):** The number of surviving elements K
+    determines the L2 sensitivity. When ``fixed_k`` is set, K is
+    data-independent and the full epsilon goes to noise calibration.
+    When K is adaptive (default), epsilon is split:
+
+    - ε_select = ε/3: accounts for the data-dependent selection
+      (the percentile cutoff leaks which elements are large)
+    - ε_noise = 2ε/3: calibrates the Gaussian noise with the
+      worst-case K for this round
+
+    This ensures the total mechanism satisfies (ε,δ)-DP under
+    adaptive composition (Dwork et al. 2010).
     """
     cfg = PercentilePrivacyConfig(
         percentile=percentile, gamma=gamma,
         noise_scale=noise_scale, epsilon=epsilon, delta=delta,
+        fixed_k=fixed_k,
     )
 
     # Pre-import calibration function if epsilon is set.
-    # Actual calibration is deferred to per-round application because
-    # the L2 sensitivity depends on the number of surviving elements K:
-    # Δ₂ = gamma * √K, not just gamma.
     _calibrate_fn = None
     if cfg.epsilon > 0:
         from sfl.privacy.dp import calibrate_gaussian_sigma
         _calibrate_fn = calibrate_gaussian_sigma
+        if cfg.fixed_k is not None:
+            log(INFO,
+                "PercentilePrivacy: fixed_k=%d — sensitivity is data-independent, "
+                "full ε=%.2f goes to noise calibration.",
+                cfg.fixed_k, cfg.epsilon)
+        else:
+            log(WARNING,
+                "PercentilePrivacy: adaptive K — splitting ε=%.2f into "
+                "ε_select=%.4f (selection) + ε_noise=%.4f (Gaussian). "
+                "Set --percentile-fixed-k for tighter guarantees.",
+                cfg.epsilon, cfg.epsilon / 3.0, 2.0 * cfg.epsilon / 3.0)
     elif cfg.noise_scale > 0:
         log(WARNING,
             "PercentilePrivacy: noise_scale=%.4f is uncalibrated (no formal "
@@ -125,30 +155,72 @@ def make_percentile_privacy_mod(
         all_abs = np.concatenate([np.abs(p.ravel()) for p in params])
         cutoff = np.percentile(all_abs, cfg.percentile)
 
-        # Count surviving elements for correct L2 sensitivity
-        k_surviving = int(np.sum(all_abs >= cutoff))
+        if cfg.fixed_k is not None:
+            # Data-independent K: use fixed_k for sensitivity, but
+            # still apply the percentile mask for sparsification.
+            k_for_sensitivity = cfg.fixed_k
+            k_actual = int(np.sum(all_abs >= cutoff))
+            if k_actual > k_for_sensitivity:
+                log(WARNING,
+                    "PercentilePrivacy: actual K=%d exceeds fixed_k=%d — "
+                    "clamping to fixed_k (extra survivors will be randomly "
+                    "dropped to maintain the sensitivity bound).",
+                    k_actual, k_for_sensitivity)
+        else:
+            k_for_sensitivity = int(np.sum(all_abs >= cutoff))
+            k_actual = k_for_sensitivity
 
-        # Calibrate noise per-round using correct L2 sensitivity = γ√K
+        # Calibrate noise using the appropriate K and epsilon budget
         effective_noise_scale = cfg.noise_scale
-        if _calibrate_fn is not None and k_surviving > 0:
+        if _calibrate_fn is not None and k_for_sensitivity > 0:
             import math
-            sensitivity = cfg.gamma * math.sqrt(k_surviving)
-            sigma = _calibrate_fn(cfg.epsilon, cfg.delta, sensitivity)
+            sensitivity = cfg.gamma * math.sqrt(k_for_sensitivity)
+
+            if cfg.fixed_k is not None:
+                # Full epsilon goes to noise — no selection cost
+                eps_noise = cfg.epsilon
+            else:
+                # Split epsilon: ε/3 for adaptive selection, 2ε/3 for noise
+                eps_noise = 2.0 * cfg.epsilon / 3.0
+
+            sigma = _calibrate_fn(eps_noise, cfg.delta, sensitivity)
             effective_noise_scale = sigma / cfg.gamma
             log(INFO,
-                "PercentilePrivacy: calibrated σ=%.4f for (ε=%.2f, δ=%.1e), "
-                "K=%d, Δ₂=%.4f",
-                sigma, cfg.epsilon, cfg.delta, k_surviving, sensitivity)
+                "PercentilePrivacy: calibrated σ=%.4f for (ε_noise=%.4f, δ=%.1e), "
+                "K=%d (fixed=%s), Δ₂=%.4f",
+                sigma, eps_noise, cfg.delta, k_for_sensitivity,
+                cfg.fixed_k is not None, sensitivity)
 
         filtered = []
+        # When fixed_k is set and actual survivors exceed it, we need to
+        # randomly drop extras to maintain the sensitivity bound.
+        _drop_indices = set()
+        if cfg.fixed_k is not None and k_actual > cfg.fixed_k:
+            survivor_indices = np.where(all_abs >= cutoff)[0]
+            _rng = secure_rng()
+            to_drop = _rng.choice(
+                survivor_indices, size=k_actual - cfg.fixed_k, replace=False,
+            )
+            _drop_indices = set(to_drop.tolist())
+
+        offset = 0
         for p in params:
             arr = p.copy()
             if arr.ndim == 0:
                 filtered.append(arr)
+                offset += 1
                 continue
+            flat_size = arr.size
             # Zero out values below cutoff
             mask = (arr > -cutoff) & (arr < cutoff)
             arr[mask] = 0.0
+            # Also zero out dropped survivors (fixed_k clamping)
+            if _drop_indices:
+                flat_arr = arr.ravel()
+                for idx in range(flat_size):
+                    if (offset + idx) in _drop_indices:
+                        flat_arr[idx] = 0.0
+                arr = flat_arr.reshape(arr.shape)
             # Clip remaining to gamma
             arr = np.clip(arr, -cfg.gamma, cfg.gamma)
             # Add Gaussian noise if configured
@@ -157,6 +229,7 @@ def make_percentile_privacy_mod(
                 noise = _rng.normal(0, effective_noise_scale * cfg.gamma, size=arr.shape)
                 arr = np.clip(arr + noise, -cfg.gamma, cfg.gamma)
             filtered.append(arr)
+            offset += flat_size
 
         if effective_noise_scale == 0:
             log(WARNING,
@@ -164,10 +237,15 @@ def make_percentile_privacy_mod(
                 "guarantee. It reduces bandwidth but does NOT prevent gradient "
                 "inversion attacks. Use --percentile-noise > 0 or --svt-privacy.")
 
-        log(INFO, "percentile_privacy_mod: cutoff=%.6f, percentile=%d, noise=%.4f",
-            cutoff, cfg.percentile, effective_noise_scale)
+        log(INFO, "percentile_privacy_mod: cutoff=%.6f, percentile=%d, noise=%.4f, "
+            "K=%d (fixed=%s)",
+            cutoff, cfg.percentile, effective_noise_scale,
+            k_for_sensitivity, cfg.fixed_k is not None)
 
         fit_res.parameters = ndarrays_to_parameters(filtered)
+        # Store K for external monitoring / accountant composition
+        fit_res.metrics["percentile_k"] = k_for_sensitivity
+        fit_res.metrics["percentile_k_adaptive"] = cfg.fixed_k is None
         out_msg.content = compat.fitres_to_recorddict(fit_res, keep_input=True)
         return out_msg
 
