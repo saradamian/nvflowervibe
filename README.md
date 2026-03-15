@@ -12,8 +12,9 @@ This project provides:
 - **Layered privacy** — differential privacy (server + client DP-SGD with AutoClip and Ghost Clipping), PLD-based accounting with shuffle-model amplification, adaptive and per-layer clipping, privacy filters with error feedback, SecAgg+ with partial freezing, and HE
 - **Byzantine robustness** — Multi-Krum, Trimmed Mean, and FoundationFL (NDSS 2025) aggregation strategies
 - **Configurable** via YAML, environment variables, or CLI
-- **280 tests** (218 fast + 62 slow) with GitHub Actions CI on every PR
+- **357 tests** (243 fast + 114 slow) with GitHub Actions CI on every PR
 - **Privacy auditing** — `PrivacyAuditor` for empirical DP validation through real mod chains
+- **HPC production** — round-level checkpointing, metric export (CSV/JSON/TensorBoard), mTLS/token auth, resource-aware scheduling, SLURM deployment examples
 
 ### Applications
 

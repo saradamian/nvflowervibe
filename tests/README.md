@@ -18,8 +18,13 @@
 | `privacy/he.py` | `test_filters.py` | HE encrypt/decrypt (requires tenseal) |
 | `privacy/runner_utils.py` | `test_runner_utils.py` | CLI args, mod building, env validation |
 | `esm2/*` | `test_esm2_*.py` | 5 files, all require torch (slow) |
+| `llm/*` | `test_llm_*.py` | 5 files, all require torch (slow) |
 | `utils/config.py` | `test_config.py` | YAML + env + CLI config |
 | `utils/params.py` | `test_extensibility.py` | downcast/upcast utilities |
+| `utils/checkpoint.py` | `test_hpc_utils.py` | CheckpointManager, save/load/cleanup |
+| `utils/metrics.py` | `test_hpc_utils.py` | MetricsCollector, CSV/JSON export |
+| `utils/resources.py` | `test_hpc_utils.py` | ClientResources, auto-detect, backend config |
+| `utils/grpc_auth.py` | `test_hpc_utils.py` | TLS config, token auth, env helpers |
 
 ## Test Markers
 

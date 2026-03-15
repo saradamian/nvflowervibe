@@ -36,6 +36,12 @@ def add_privacy_args(parser: argparse.ArgumentParser) -> None:
     (--dp, --percentile-privacy, --svt-privacy, --compress, etc.)
     without copy-pasting the argparse definitions.
     """
+    # ── Checkpointing ────────────────────────────────────────────────
+    parser.add_argument("--checkpoint-dir", type=str, default=None,
+                        help="Directory for round-level checkpoints (enables auto-save)")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume training from the latest checkpoint in --checkpoint-dir")
+
     # ── Differential Privacy ─────────────────────────────────────────
     parser.add_argument("--dp", action="store_true",
                         help="Enable differential privacy")
@@ -152,6 +158,23 @@ def add_privacy_args(parser: argparse.ArgumentParser) -> None:
                         help="Enable Ghost Clipping: memory-efficient two-pass DP-SGD "
                              "(reduces memory from O(B*P) to O(B+P))")
 
+    # ── Metrics ─────────────────────────────────────────────────────────
+    parser.add_argument("--metrics-dir", type=str, default=None,
+                        help="Directory for metrics output files (default: None, no export)")
+    parser.add_argument("--metrics-format", type=str, default="csv",
+                        choices=["csv", "json", "tensorboard", "all"],
+                        help="Metrics export format (default: csv)")
+
+    # ── Resource Allocation ──────────────────────────────────────────
+    parser.add_argument("--client-cpus", type=int, default=1,
+                        help="CPU cores per simulation client (default: 1)")
+    parser.add_argument("--client-gpus", type=float, default=0,
+                        help="GPUs per client (default: 0 = auto-detect and split evenly)")
+    parser.add_argument("--client-memory", type=int, default=None, metavar="MB",
+                        help="Memory hint per client in MB (for documentation/scheduling)")
+    parser.add_argument("--no-auto-detect-gpu", action="store_true",
+                        help="Disable automatic GPU detection; use --client-gpus literally")
+
 
 def build_privacy_mods(args: argparse.Namespace) -> List[Any]:
     """Build a list of Flower client mods from parsed CLI args.
@@ -164,6 +187,12 @@ def build_privacy_mods(args: argparse.Namespace) -> List[Any]:
     server and client code can read them at runtime.
     """
     client_mods: List[Any] = []
+
+    # ── Checkpointing env vars ──────────────────────────────────────
+    if getattr(args, "checkpoint_dir", None) is not None:
+        os.environ["SFL_CHECKPOINT_DIR"] = args.checkpoint_dir
+        if getattr(args, "resume", False):
+            os.environ["SFL_RESUME"] = "true"
 
     # ── Differential Privacy env vars ────────────────────────────────
     if args.dp:
@@ -262,6 +291,11 @@ def build_privacy_mods(args: argparse.Namespace) -> List[Any]:
             os.environ["SFL_DPSGD_AUTOCLIP"] = "true"
         if args.dpsgd_ghost:
             os.environ["SFL_DPSGD_GHOST"] = "true"
+
+    # ── Metrics ───────────────────────────────────────────────────────
+    if getattr(args, "metrics_dir", None) is not None:
+        os.environ["SFL_METRICS_DIR"] = args.metrics_dir
+        os.environ["SFL_METRICS_FORMAT"] = getattr(args, "metrics_format", "csv")
 
     # ── Partial Freezing ─────────────────────────────────────────────
     if args.freeze_layers is not None:
