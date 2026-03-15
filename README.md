@@ -9,10 +9,10 @@ This project provides:
 - **Extensible base framework** — abstract `BaseFederatedClient` with type-safe contracts, configurable `FederationConfig`, shared type aliases
 - **ESM2 protein model application** — federated fine-tuning of ESM2 (8M–35M params) via masked language modeling, built on the base framework
 - **NVFlare + Flower integration** — run with pure Flower simulation or NVFlare orchestration
-- **Layered privacy** — differential privacy (server + client DP-SGD), PLD-based accounting with automatic budget enforcement, adaptive clipping, privacy filters, SecAgg+, and HE
-- **Byzantine robustness** — Multi-Krum and Trimmed Mean aggregation strategies
+- **Layered privacy** — differential privacy (server + client DP-SGD with AutoClip and Ghost Clipping), PLD-based accounting with shuffle-model amplification, adaptive and per-layer clipping, privacy filters with error feedback, SecAgg+ with partial freezing, and HE
+- **Byzantine robustness** — Multi-Krum, Trimmed Mean, and FoundationFL (NDSS 2025) aggregation strategies
 - **Configurable** via YAML, environment variables, or CLI
-- **132 tests** with GitHub Actions CI on every PR
+- **222 tests** with GitHub Actions CI on every PR
 
 ### Applications
 
@@ -56,7 +56,7 @@ sfl/
 │   │   ├── accountant.py       # PLD-based privacy accounting + budget enforcement
 │   │   ├── adaptive_clip.py    # Adaptive clipping norm (Andrew et al. 2021)
 │   │   ├── dp.py               # DP wrappers, noise calibration, accounting wrapper
-│   │   ├── filters.py          # Privacy filters (Percentile, SVT, Compression)
+│   │   ├── filters.py          # Privacy filters (Percentile, SVT, Compression, Partial Freeze)
 │   │   ├── he.py               # Homomorphic encryption (TenSEAL CKKS)
 │   │   └── secagg.py           # SecAgg+ configuration
 │   └── utils/
@@ -81,6 +81,7 @@ sfl/
 │   ├── test_esm2_dataset.py    # MLM masking, partitioning
 │   ├── test_esm2_client.py     # ESM2Client inheritance, training, evaluation
 │   └── test_esm2_server.py     # Server FedAvg setup, config overrides
+├── CONTRIBUTING.md             # Contribution guide
 ├── SECURITY_AUDIT.md           # Security audit findings
 ├── UPGRADE_PLAN.md             # Upgrade plan for security improvements
 ├── docs/
@@ -173,11 +174,32 @@ python jobs/esm2_runner.py --compress 0.1 --compress-topk
 # Exclude embedding layers from aggregation
 python jobs/esm2_runner.py --exclude-layers 0,1
 
+# AutoClip DP-SGD (no clipping norm tuning needed)
+python jobs/esm2_runner.py --dpsgd --dpsgd-autoclip --dpsgd-noise 1.0
+
+# Ghost Clipping (memory-efficient DP-SGD)
+python jobs/esm2_runner.py --dpsgd --dpsgd-ghost --dpsgd-noise 1.0
+
+# Shuffle-model DP amplification
+python jobs/esm2_runner.py --dp --dp-shuffle
+
+# Per-layer clipping
+python jobs/esm2_runner.py --per-layer-clip 1.0
+
+# Compression with error feedback
+python jobs/esm2_runner.py --compress 0.1 --compress-error-feedback
+
+# Partial freezing (Lambda-SecAgg)
+python jobs/esm2_runner.py --secagg --freeze-layers 4,5,6
+
 # Byzantine-robust aggregation (Multi-Krum)
 python jobs/esm2_runner.py --aggregation krum --krum-byzantine 1
 
 # Byzantine-robust aggregation (Trimmed Mean)
 python jobs/esm2_runner.py --aggregation trimmed-mean --trim-ratio 0.1
+
+# FoundationFL trust scoring (NDSS 2025)
+python jobs/esm2_runner.py --aggregation foundation-fl --ffl-threshold 0.1
 
 # Combine multiple layers
 python jobs/esm2_runner.py --dp --dp-adaptive-clip \
@@ -575,24 +597,31 @@ click>=8.1.0,<8.2.0  # Important: Click 8.2+ breaks Typer
 ### Differential Privacy
 - **Server-side DP** — Gaussian noise added to aggregate (Flower strategy wrapper)
 - **Client-side DP-SGD** — per-example gradient clipping via Opacus
+- **AutoClip** — automatic gradient normalization, eliminating clipping norm tuning (Li et al., NeurIPS 2023)
+- **Ghost Clipping** — memory-efficient two-pass DP-SGD, O(B+P) instead of O(B*P) (Li et al., 2022)
 - **PLD-based accounting** — tight (ε,δ)-DP tracking via `dp-accounting`
+- **Shuffle-model amplification** — tighter central ε via anonymous channel (Feldman et al., 2021)
 - **Automatic budget enforcement** — training auto-stops when ε exceeds budget
 - **Adaptive clipping** — geometric norm update (Andrew et al. 2021) with optional noisy quantile
+- **Per-layer clipping** — independent L2 clips per parameter tensor (Yu et al., ICLR 2022)
 - **Joint composition** — server + client DP-SGD epsilon composed via sequential theorem
 - **Noise calibration** — `calibrate_gaussian_sigma()` computes minimal noise for target (ε,δ)
 
 ### Privacy Filters
 - **PercentilePrivacy** — top-K% sparsification with optional calibrated noise
 - **SVT** — Sparse Vector Technique with optimal budget allocation (Lyu et al. 2017)
-- **Gradient Compression** — TopK / random masking with (ε,δ)-calibrated noise
+- **Gradient Compression** — TopK / random masking with (ε,δ)-calibrated noise and error feedback
 - **ExcludeVars** — zero out sensitive layers (embeddings, classifier heads)
+- **Partial Freezing** — strip frozen layers from updates to reduce SecAgg overhead (Lambda-SecAgg)
 
 ### Byzantine Robustness
 - **Multi-Krum** — tolerates up to f Byzantine clients (Blanchard et al., NeurIPS 2017)
 - **Trimmed Mean** — coordinate-wise outlier trimming (Yin et al., ICML 2018)
+- **FoundationFL** — trust scoring via cosine similarity to root dataset (NDSS 2025)
 
 ### Secure Aggregation & Encryption
 - **SecAgg+** — Flower's secret-sharing protocol; server sees only the aggregate
+- **Partial Freezing** — reduces SecAgg cost by sending only trainable layers
 - **Homomorphic Encryption** — TenSEAL CKKS for encrypted aggregation (demo-scale)
 
 ### TLS/SSL Encryption

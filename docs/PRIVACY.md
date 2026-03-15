@@ -25,8 +25,8 @@ independently or combined for defense in depth:
 │ or per-sample│ at client     │ contributions│ (TEEs)       │                    │
 ├──────────────┼───────────────┼──────────────┼──────────────┼────────────────────┤
 │ Flower       │ Flower mods   │ TenSEAL /    │ Azure CVM /  │ Multi-Krum /       │
-│ strategy +   │ (ported from  │ Flower       │ NVFlare      │ Trimmed Mean       │
-│ Opacus       │ NVFlare)      │ SecAgg+      │ provisioning │ (Flower strategy)  │
+│ strategy +   │ (ported from  │ Flower       │ NVFlare      │ Trimmed Mean /     │
+│ Opacus       │ NVFlare)      │ SecAgg+      │ provisioning │ FoundationFL       │
 └──────────────┴───────────────┴──────────────┴──────────────┴────────────────────┘
 ```
 
