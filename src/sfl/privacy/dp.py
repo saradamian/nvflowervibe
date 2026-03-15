@@ -399,51 +399,32 @@ class _AccountingWrapper(Strategy):
         return self._inner.aggregate_evaluate(server_round, results, failures)
 
 
-# ── Distributed noise helpers (shuffle-model DP) ────────────────────────
-
 def compute_distributed_noise_params(
     target_sigma: float,
     num_clients: int,
     *,
     trust_fraction: float = 0.0,
 ) -> dict:
-    """Compute per-client and server noise for distributed Gaussian noise.
+    """Compute per-client and server noise for distributed Gaussian DP.
 
-    In the shuffle model of DP (Balle et al. 2019, Feldman et al. 2023),
-    the noise can be split across clients and a (semi-trusted) server so
-    that the *sum* of all noise sources yields the required total σ.
+    Splits the total noise budget across clients and server so that
+    ``n * sigma_client^2 + sigma_server^2 = target_sigma^2``.
 
-    Each client adds i.i.d. Gaussian noise with std ``σ_client``, and the
-    server adds Gaussian noise with std ``σ_server``. The total noise
-    variance must equal ``target_sigma²``:
-
-        n * σ_client² + σ_server² = target_sigma²
-
-    The ``trust_fraction`` parameter controls how much noise the server
-    contributes (0 = fully distributed, 1 = server adds all noise).
-
-    When SecAgg is used, client noises cancel out on the server side
-    and only the server's calibrated noise remains — but in the shuffle
-    model *without* SecAgg, each client's local noise provides local DP
-    that gets amplified by the shuffling step.
+    In NVFlare distributed mode, each client adds its own noise locally
+    (providing local DP via shuffle amplification), and the server adds
+    the remaining noise after aggregation.
 
     Args:
-        target_sigma: Required total noise std (= noise_multiplier × clip_norm).
-        num_clients: Number of participating clients in this round.
-        trust_fraction: Fraction of total noise variance assigned to the
-            server. 0.0 = fully distributed (each client adds equal share).
-            1.0 = server adds all noise (no client-side noise).
+        target_sigma: Required total noise std (noise_multiplier * clip_norm).
+        num_clients: Number of participating clients.
+        trust_fraction: Fraction of noise variance on the server.
+            0.0 = fully distributed, 1.0 = all server-side.
 
     Returns:
-        Dict with keys:
-        - ``sigma_client``: Per-client noise std.
-        - ``sigma_server``: Server noise std.
-        - ``total_sigma``: Verification of √(n·σ_c² + σ_s²).
-        - ``num_clients``: Number of clients used.
-
-    Raises:
-        ValueError: If inputs are invalid.
+        Dict with ``sigma_client``, ``sigma_server``, ``total_sigma``.
     """
+    import math
+
     if target_sigma <= 0:
         raise ValueError(f"target_sigma must be positive, got {target_sigma}")
     if num_clients < 1:
@@ -451,21 +432,14 @@ def compute_distributed_noise_params(
     if not 0.0 <= trust_fraction <= 1.0:
         raise ValueError(f"trust_fraction must be in [0, 1], got {trust_fraction}")
 
-    import math
-
     total_var = target_sigma ** 2
     server_var = trust_fraction * total_var
     client_var = (1.0 - trust_fraction) * total_var / num_clients
 
-    sigma_client = math.sqrt(client_var)
-    sigma_server = math.sqrt(server_var)
-
-    # Verification
-    actual_total = math.sqrt(num_clients * client_var + server_var)
-
     return {
-        "sigma_client": sigma_client,
-        "sigma_server": sigma_server,
-        "total_sigma": actual_total,
+        "sigma_client": math.sqrt(client_var),
+        "sigma_server": math.sqrt(server_var),
+        "total_sigma": math.sqrt(num_clients * client_var + server_var),
         "num_clients": num_clients,
     }
+

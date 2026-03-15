@@ -107,48 +107,8 @@ def server_fn(context: Context) -> ServerAppComponents:
         strategy = SumFedAvg(**strategy_kwargs)
 
     # Wrap with DP if configured (check run_config or env vars)
-    dp_enabled = (
-        str(run_config.get("dp-enabled", "false")).lower() == "true"
-        or os.environ.get("SFL_DP_ENABLED", "").lower() == "true"
-    )
-    if dp_enabled:
-        from sfl.privacy.dp import DPConfig, wrap_strategy_with_dp
-
-        dp_config = DPConfig(
-            noise_multiplier=float(
-                run_config.get("dp-noise-multiplier",
-                               os.environ.get("SFL_DP_NOISE", "1.0"))
-            ),
-            clipping_norm=float(
-                run_config.get("dp-clipping-norm",
-                               os.environ.get("SFL_DP_CLIP", "10.0"))
-            ),
-            num_sampled_clients=num_clients,
-            mode=str(
-                run_config.get("dp-mode",
-                               os.environ.get("SFL_DP_MODE", "server"))
-            ),
-            target_delta=float(os.environ.get("SFL_DP_DELTA", "1e-5")),
-            max_epsilon=float(os.environ.get("SFL_DP_MAX_EPSILON", "10.0")),
-            num_total_clients=num_clients,
-            adaptive_clipping=(
-                os.environ.get("SFL_DP_ADAPTIVE_CLIP", "").lower() == "true"
-            ),
-            target_quantile=float(
-                os.environ.get("SFL_DP_TARGET_QUANTILE", "0.5")
-            ),
-            clip_learning_rate=float(
-                os.environ.get("SFL_DP_CLIP_LR", "0.2")
-            ),
-            quantile_noise_multiplier=float(
-                os.environ.get("SFL_DP_QUANTILE_NOISE", "0.0")
-            ),
-            accounting_backend=os.environ.get("SFL_DP_ACCOUNTING_BACKEND", "pld"),
-            shuffle_model=(
-                os.environ.get("SFL_DP_SHUFFLE", "").lower() == "true"
-            ),
-        )
-        strategy = wrap_strategy_with_dp(strategy, dp_config)
+    from sfl.server.dp_setup import apply_dp_if_enabled
+    strategy = apply_dp_if_enabled(strategy, run_config, num_clients)
     
     # Create server config
     config = ServerConfig(num_rounds=num_rounds)

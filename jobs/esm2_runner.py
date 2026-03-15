@@ -2,15 +2,17 @@
 ESM2 Federated Learning Runner.
 
 Runs federated fine-tuning of ESM2 protein language models using Flower
-simulation, optionally orchestrated by NVFlare.
+simulation or NVFlare distributed execution.
 
 Usage:
     python jobs/esm2_runner.py
     python jobs/esm2_runner.py --num-clients 4 --num-rounds 3
-    python jobs/esm2_runner.py --model facebook/esm2_t12_35M_UR50D --local-epochs 2
+    python jobs/esm2_runner.py --backend nvflare-sim
+    python jobs/esm2_runner.py --backend nvflare --startup-kit ~/.nvflare/admin
 """
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 
@@ -34,11 +36,11 @@ Examples:
     # More clients and rounds
     python jobs/esm2_runner.py --num-clients 4 --num-rounds 5
 
-    # Larger model
-    python jobs/esm2_runner.py --model facebook/esm2_t12_35M_UR50D
+    # NVFlare local simulation
+    python jobs/esm2_runner.py --backend nvflare-sim
 
-    # Adjust training hyperparams
-    python jobs/esm2_runner.py --learning-rate 1e-4 --local-epochs 2 --batch-size 8
+    # NVFlare distributed (requires provisioned startup kits)
+    python jobs/esm2_runner.py --backend nvflare --startup-kit ~/.nvflare/admin
         """,
     )
 
@@ -84,8 +86,10 @@ Examples:
 
     # Backend
     parser.add_argument("--backend", type=str, default="flower",
-                        choices=["flower", "nvflare"],
-                        help="Simulation backend (default: flower)")
+                        choices=["flower", "nvflare-sim", "nvflare-poc", "nvflare"],
+                        help="Execution backend (default: flower)")
+    parser.add_argument("--startup-kit", type=str, default=None,
+                        help="Path to NVFlare admin startup kit (required for --backend nvflare)")
 
     # All privacy/security flags (DP, filters, SecAgg, aggregation, DP-SGD)
     add_privacy_args(parser)
@@ -94,11 +98,7 @@ Examples:
 
 
 def _save_final_model(args: argparse.Namespace, logger) -> None:
-    """Save the trained model after FL completes.
-
-    Loads the model, which in simulation picks up the last state,
-    and saves weights + tokenizer to save_dir.
-    """
+    """Save the trained model after FL completes."""
     from sfl.esm2.model import load_model, load_tokenizer
 
     save_path = Path(args.save_dir)
@@ -135,6 +135,22 @@ def _set_esm2_config(args: argparse.Namespace) -> None:
     ))
 
 
+def _build_esm2_run_config(args: argparse.Namespace) -> dict:
+    """Build Flower run_config dict from CLI args for NVFlare staging."""
+    return {
+        "num-server-rounds": args.num_rounds,
+        "num-clients": args.num_clients,
+        "esm2-model": args.model,
+        "learning-rate": args.learning_rate,
+        "local-epochs": args.local_epochs,
+        "batch-size": args.batch_size,
+        "max-length": args.max_length,
+        "dataset-name": args.dataset or "",
+        "sequence-column": args.sequence_column,
+        "max-samples": args.max_samples or 0,
+    }
+
+
 def run_flower(args: argparse.Namespace, logger) -> int:
     """Run ESM2 FL training using pure Flower simulation."""
     from flwr.client import ClientApp
@@ -144,10 +160,8 @@ def run_flower(args: argparse.Namespace, logger) -> int:
     from sfl.esm2.client import client_fn
     from sfl.esm2.server import server_fn
 
-    # Store config so client_fn/server_fn can read it
     _set_esm2_config(args)
 
-    # Build client mods for privacy (sets SFL_* env vars + returns mod list)
     client_mods = build_privacy_mods(args)
     validate_env_vars()
 
@@ -170,7 +184,6 @@ def run_flower(args: argparse.Namespace, logger) -> int:
 
     logger.info("Starting Flower simulation for ESM2 FL...")
 
-    # Detect GPU availability and allocate to clients
     try:
         import torch
         num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
@@ -185,107 +198,63 @@ def run_flower(args: argparse.Namespace, logger) -> int:
         num_supernodes=args.num_clients,
         backend_config={
             "client_resources": {
-                "num_cpus": 1,
-                "num_gpus": gpus_per_client,
+                "num_cpus": getattr(args, "client_cpus", 1),
+                "num_gpus": gpus_per_client if not getattr(args, "no_auto_detect_gpu", False) else getattr(args, "client_gpus", 0),
             }
         },
     )
 
-    # Save final model if requested
     if args.save_dir:
         _save_final_model(args, logger)
 
     return 0
 
 
-def _write_esm2_pyproject(staging_dir: Path, args) -> None:
-    """Write a pyproject.toml that points Flower at the ESM2 apps."""
-    content = f"""\
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[project]
-name = "sfl-esm2"
-version = "0.1.0"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/sfl"]
-
-[tool.flwr.app]
-publisher = "sfl-demo"
-
-[tool.flwr.app.components]
-serverapp = "sfl.esm2:server_app"
-clientapp = "sfl.esm2:client_app"
-
-[tool.flwr.app.config]
-num-server-rounds = {args.num_rounds}
-num-clients = {args.num_clients}
-esm2-model = "{args.model}"
-learning-rate = {args.learning_rate}
-local-epochs = {args.local_epochs}
-batch-size = {args.batch_size}
-max-length = {args.max_length}
-dataset-name = "{args.dataset or ''}"
-sequence-column = "{args.sequence_column}"
-max-samples = {args.max_samples if args.max_samples else 0}
-
-[tool.flwr.federations]
-default = "local-simulation"
-
-[tool.flwr.federations.local-simulation]
-options.num-supernodes = {args.num_clients}
-address = "127.0.0.1:9093"
-insecure = true
-"""
-    (staging_dir / "pyproject.toml").write_text(content)
-
-
 def run_nvflare(args: argparse.Namespace, logger) -> int:
-    """Run ESM2 FL training using NVFlare FlowerRecipe."""
-    import shutil
-    import tempfile
+    """Run ESM2 FL training using NVFlare backend."""
+    from sfl.nvflare.backend import (
+        NVFlareBackendConfig, NVFlareMode, build_extra_env, run_nvflare as nvflare_run,
+    )
+    from sfl.nvflare.staging import stage_flower_content
+
+    _set_esm2_config(args)
+
+    # Build privacy mods (sets SFL_* env vars) — for Flower simulation
+    # the mods list is used directly; for NVFlare the env vars are
+    # propagated via extra_env and auto_build_client_mods() rebuilds
+    # the mods on each site.
+    build_privacy_mods(args)
+    validate_env_vars()
+
+    extra_env = build_extra_env(include_non_sfl=True)
+
+    # Add DP config to run_config so server_fn can read it
+    run_config = _build_esm2_run_config(args)
+    if args.dp:
+        run_config["dp-enabled"] = True
+        run_config["dp-noise-multiplier"] = args.dp_noise
+        run_config["dp-clipping-norm"] = args.dp_clip
+        run_config["dp-mode"] = args.dp_mode
+
+    project_root = Path(__file__).parent.parent
+    staging_dir = stage_flower_content(project_root, "esm2", run_config)
+
+    mode_map = {
+        "nvflare-sim": NVFlareMode.SIM,
+        "nvflare-poc": NVFlareMode.POC,
+        "nvflare": NVFlareMode.PROD,
+    }
 
     try:
-        from nvflare.app_opt.flower.recipe import FlowerRecipe
-        from nvflare.recipe.sim_env import SimEnv
-    except ImportError as e:
-        logger.error(f"NVFlare not available: {e}")
-        logger.error("Install with: pip install nvflare==2.7.1")
-        logger.info("Falling back to pure Flower simulation...")
-        return run_flower(args, logger)
-
-    content_dir = Path(__file__).parent.parent
-    if not (content_dir / "pyproject.toml").exists():
-        logger.error(f"pyproject.toml not found in {content_dir}")
-        return 1
-
-    # Stage only needed files (avoids copying .git/, .venv/, etc.)
-    staging_dir = Path(tempfile.mkdtemp(prefix="sfl_esm2_nvflare_"))
-    try:
-        shutil.copytree(content_dir / "src", staging_dir / "src")
-        if (content_dir / "config").exists():
-            shutil.copytree(content_dir / "config", staging_dir / "config")
-
-        # Write a pyproject.toml that points Flower at ESM2 apps
-        _write_esm2_pyproject(staging_dir, args)
-
-        logger.info("Starting NVFlare SimEnv for ESM2 FL...")
-
-        recipe = FlowerRecipe(
-            flower_content=str(staging_dir),
-            name="esm2-federated-mlm",
-            min_clients=args.num_clients,
-        )
-
-        env = SimEnv(
+        config = NVFlareBackendConfig(
+            mode=mode_map[args.backend],
             num_clients=args.num_clients,
-            num_threads=args.num_clients,
+            flower_content=str(staging_dir),
+            extra_env=extra_env,
+            job_name=f"sfl-esm2-{args.model.split('/')[-1]}",
+            startup_kit=args.startup_kit,
         )
-
-        recipe.execute(env=env)
-        return 0
+        return nvflare_run(config)
     finally:
         shutil.rmtree(staging_dir, ignore_errors=True)
 
@@ -319,10 +288,10 @@ def main() -> int:
     logger.info("-" * 60)
 
     try:
-        if args.backend == "nvflare":
-            return run_nvflare(args, logger)
-        else:
+        if args.backend == "flower":
             return run_flower(args, logger)
+        else:
+            return run_nvflare(args, logger)
     except Exception as e:
         logger.error(f"ESM2 FL training failed: {e}")
         logger.exception("Full traceback:")
