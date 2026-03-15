@@ -117,6 +117,11 @@ python jobs/esm2_runner.py --dp --dp-noise 0.5 --dp-accounting-backend prv
   the budget is exceeded, allowing callers to handle gracefully.
 - **PRV error bounds** — when using the PRV backend, access ε error
   bounds via `accountant.epsilon_bounds` → `(ε_low, ε_est, ε_high)`.
+  The `eps_error` parameter (default 0.01) controls precision — lower
+  values give tighter bounds at higher compute cost.
+- **Auxiliary composition** — `compose_auxiliary()` composes DP costs
+  from adaptive clipping and SVT into the running privacy budget via
+  `ComposedDpEvent`. Only available with the PLD backend.
 
 ```python
 from sfl.privacy.accountant import PrivacyAccountant
@@ -351,6 +356,33 @@ binary search (`calibrate_gaussian_sigma`) to provide a formal
 (ε,δ)-DP guarantee. When only `--percentile-noise` is set, uncalibrated
 noise is added with a warning.
 
+#### Adaptive K Accounting (PR #37)
+
+When the number of surviving elements K is data-dependent (the default),
+the selection step itself leaks information. To maintain formal DP
+guarantees, epsilon is split:
+
+- **ε/3** for the selection mechanism (choosing which elements survive)
+- **2ε/3** for the noise mechanism (calibrated Gaussian on survivors)
+
+For data-independent sensitivity, set `fixed_k` in
+`PercentilePrivacyConfig`:
+
+```python
+from sfl.privacy.filters import PercentilePrivacyConfig, make_percentile_privacy_mod
+
+# Fixed K: full epsilon goes to noise (tighter guarantee)
+config = PercentilePrivacyConfig(percentile=10, epsilon=1.0, fixed_k=500)
+mod = make_percentile_privacy_mod(config)
+
+# Adaptive K: epsilon automatically split ε/3 + 2ε/3
+config = PercentilePrivacyConfig(percentile=10, epsilon=1.0)
+mod = make_percentile_privacy_mod(config)
+```
+
+The `percentile_k` and `percentile_k_adaptive` metrics are stored in
+`FitRes` for observability.
+
 **Effect**: At `--percentile-privacy 10`, 90% of weight diffs are zeroed.
 This dramatically reduces information leakage and network bandwidth while
 preserving the most significant updates.
@@ -385,6 +417,10 @@ et al. 2017, which allocates more ε to the threshold noise than to the
 value noise for better utility. Use `--svt-no-optimal` for the classic
 even split. Pre-screening (`--svt-prescreen 0.5`) reduces computation
 by only scoring the top half of parameters by absolute value.
+
+**Observability** (PR #36): SVT now reports `svt_acceptance_rate` in
+fit metrics and emits a warning when acceptance drops below expected
+levels, helping diagnose utility degradation.
 
 ### ExcludeVars (Layer Exclusion)
 
@@ -698,9 +734,73 @@ python jobs/esm2_runner.py --aggregation foundation-fl --ffl-no-weighted
 | `--ffl-threshold` | 0.1 | Min cosine similarity to keep a client update (-1 to 1) |
 | `--ffl-no-weighted` | off | Use binary filtering instead of trust-weighted averaging |
 
-**Note**: For strongest defense, provide a root dataset so the server
-can compute its own reference update. Without a root dataset, the
-strategy falls back to using the client mean as reference (less robust).
+**Root update requirement** (PR #37): `FoundationFLFedAvg` now requires
+a `root_update` vector by default. Without a trusted reference, a
+Byzantine majority can shift the client mean toward their poisoned
+direction, defeating the filter. To explicitly opt in to the weaker
+client-mean fallback, pass `allow_untrusted_reference=True` (not
+recommended for production).
+
+```python
+from sfl.server.robust import FoundationFLFedAvg
+
+# Production: provide root update from server's clean dataset
+strategy = FoundationFLFedAvg(root_update=root_vector, trust_threshold=0.1)
+
+# Development only: falls back to client mean (vulnerable to Byzantine majority)
+strategy = FoundationFLFedAvg(
+    root_update=None,
+    allow_untrusted_reference=True,
+    trust_threshold=0.1,
+)
+```
+
+---
+
+## Privacy Auditing (PR #37)
+
+`PrivacyAuditor` provides empirical DP validation by measuring how much
+information about a known canary gradient survives the privacy pipeline.
+
+### Basic Audit
+
+```python
+from sfl.privacy import PrivacyAuditor
+import numpy as np
+
+auditor = PrivacyAuditor(param_shapes=[(100,), (50, 50)])
+result = auditor.run_audit(
+    params=[np.random.randn(100).astype(np.float32),
+            np.random.randn(50, 50).astype(np.float32)],
+    num_trials=200,
+)
+print(f"Canary similarity: {result.canary_similarity:.4f}")
+print(f"Random baseline:   {result.random_similarity:.4f}")
+print(f"Pass: {result.passed}")
+```
+
+### Pipeline Audit (End-to-End)
+
+`run_pipeline_audit()` sends canary gradients through actual Flower
+client mods — SVT, percentile, compression — rather than a simplified
+simulation. This validates that the real mod chain provides the expected
+privacy guarantees.
+
+```python
+from sfl.privacy import PrivacyAuditor
+from sfl.privacy.filters import make_svt_privacy_mod, SVTPrivacyConfig
+
+# Build mod chain
+svt_mod = make_svt_privacy_mod(SVTPrivacyConfig(epsilon=0.1, fraction=0.1))
+
+auditor = PrivacyAuditor(param_shapes=[(1000,)])
+result = auditor.run_pipeline_audit(
+    params=[np.zeros(1000, dtype=np.float32)],
+    mods=[svt_mod],
+    num_trials=200,
+)
+print(f"Pipeline similarity: {result.canary_similarity:.4f}")
+```
 
 ---
 

@@ -12,7 +12,8 @@ This project provides:
 - **Layered privacy** — differential privacy (server + client DP-SGD with AutoClip and Ghost Clipping), PLD-based accounting with shuffle-model amplification, adaptive and per-layer clipping, privacy filters with error feedback, SecAgg+ with partial freezing, and HE
 - **Byzantine robustness** — Multi-Krum, Trimmed Mean, and FoundationFL (NDSS 2025) aggregation strategies
 - **Configurable** via YAML, environment variables, or CLI
-- **222 tests** with GitHub Actions CI on every PR
+- **238 tests** (176 fast + 62 slow) with GitHub Actions CI on every PR
+- **Privacy auditing** — `PrivacyAuditor` for empirical DP validation through real mod chains
 
 ### Applications
 
@@ -42,7 +43,7 @@ sfl/
 │   │   └── sum_client.py       # SumClient — demo implementation
 │   ├── server/
 │   │   ├── strategy.py         # SumFedAvg — custom aggregation strategy
-│   │   ├── robust.py           # Multi-Krum & Trimmed Mean (Byzantine-robust)
+│   │   ├── robust.py           # Multi-Krum, Trimmed Mean, FoundationFL (Byzantine-robust)
 │   │   └── app.py              # Server application (sum demo)
 │   ├── esm2/
 │   │   ├── __init__.py         # Exports client_app, server_app (Flower apps)
@@ -53,8 +54,9 @@ sfl/
 │   │   └── server.py           # FedAvg seeded with pretrained ESM2 weights
 │   ├── privacy/
 │   │   ├── __init__.py         # Privacy module exports
-│   │   ├── accountant.py       # PLD-based privacy accounting + budget enforcement
+│   │   ├── accountant.py       # PLD/PRV privacy accounting + budget enforcement + auxiliary composition
 │   │   ├── adaptive_clip.py    # Adaptive clipping norm (Andrew et al. 2021)
+│   │   ├── audit.py            # PrivacyAuditor — empirical DP validation through real mod chains
 │   │   ├── dp.py               # DP wrappers, noise calibration, accounting wrapper
 │   │   ├── filters.py          # Privacy filters (Percentile, SVT, Compression, Partial Freeze)
 │   │   ├── he.py               # Homomorphic encryption (TenSEAL CKKS)
@@ -75,7 +77,7 @@ sfl/
 │   ├── test_accountant.py      # Privacy accountant, budget, composition
 │   ├── test_filters.py         # Percentile, SVT, compression, HE filters
 │   ├── test_dpsgd.py           # Per-example DP-SGD (Opacus)
-│   ├── test_robust.py          # Multi-Krum, Trimmed Mean aggregation
+│   ├── test_robust.py          # Multi-Krum, Trimmed Mean, FoundationFL aggregation
 │   ├── test_esm2_config.py     # ESM2RunConfig + FederationConfig composition
 │   ├── test_esm2_model.py      # Model loading, parameter roundtrip
 │   ├── test_esm2_dataset.py    # MLM masking, partitioning
@@ -212,8 +214,17 @@ including HE limitations, confidential computing, and trade-off analysis.
 ### 5. Run Tests
 
 ```bash
+# Fast tests only (CI default, ~2.5 min)
+python -m pytest tests/ -v -m "not slow"
+
+# Full suite including slow tests (torch/GPU/PRV, ~8 min)
 python -m pytest tests/ -v
+
+# Specific module
+python -m pytest tests/test_filters.py -v
 ```
+
+Tests are split into **fast** (176 tests, no heavy dependencies) and **slow** (62 tests, requires torch/opacus/dp-accounting). CI runs fast tests only via `@pytest.mark.slow`.
 
 ---
 
@@ -599,28 +610,44 @@ click>=8.1.0,<8.2.0  # Important: Click 8.2+ breaks Typer
 - **Client-side DP-SGD** — per-example gradient clipping via Opacus
 - **AutoClip** — automatic gradient normalization, eliminating clipping norm tuning (Li et al., NeurIPS 2023)
 - **Ghost Clipping** — memory-efficient two-pass DP-SGD, O(B+P) instead of O(B*P) (Li et al., 2022)
-- **PLD-based accounting** — tight (ε,δ)-DP tracking via `dp-accounting`
+- **PLD/PRV accounting** — tight (ε,δ)-DP tracking via `dp-accounting` (PLD) or `prv_accountant` (PRV with error bounds)
+- **Configurable PRV precision** — `eps_error` default 0.01 for ±1% epsilon accuracy (PR #36)
 - **Shuffle-model amplification** — tighter central ε via anonymous channel (Feldman et al., 2021)
 - **Automatic budget enforcement** — training auto-stops when ε exceeds budget
 - **Adaptive clipping** — geometric norm update (Andrew et al. 2021) with optional noisy quantile
 - **Per-layer clipping** — independent L2 clips per parameter tensor (Yu et al., ICLR 2022)
 - **Joint composition** — server + client DP-SGD epsilon composed via sequential theorem
+- **Auxiliary composition** — `compose_auxiliary()` for adaptive clip/SVT DP costs via ComposedDpEvent (PR #36)
 - **Noise calibration** — `calibrate_gaussian_sigma()` computes minimal noise for target (ε,δ)
 
 ### Privacy Filters
 - **PercentilePrivacy** — top-K% sparsification with optional calibrated noise
+  - **Adaptive K accounting** — when K is data-dependent, epsilon is split ε/3 (selection) + 2ε/3 (noise) for formal DP guarantee. Use `fixed_k` for data-independent sensitivity and full epsilon allocation (PR #37)
 - **SVT** — Sparse Vector Technique with optimal budget allocation (Lyu et al. 2017)
+  - **Enhanced observability** — `svt_acceptance_rate` metric, low-acceptance warnings (PR #36)
 - **Gradient Compression** — TopK / random masking with (ε,δ)-calibrated noise and error feedback
 - **ExcludeVars** — zero out sensitive layers (embeddings, classifier heads)
 - **Partial Freezing** — strip frozen layers from updates to reduce SecAgg overhead (Lambda-SecAgg)
+  - **Shape reconstruction** — frozen layer shapes stored in `_frozen_shapes` metric for correct server-side restoration (PR #36)
+
+### Privacy Auditing
+
+- **PrivacyAuditor** — empirical DP validation via canary gradient analysis (PR #37)
+  - `run_audit()` — basic canary-vs-random cosine similarity measurement
+  - `run_pipeline_audit()` — sends canary gradients through actual Flower client mods (SVT, percentile, compression) and measures information leakage end-to-end
+  - Exported from `sfl.privacy` for programmatic use
 
 ### Byzantine Robustness
 - **Multi-Krum** — tolerates up to f Byzantine clients (Blanchard et al., NeurIPS 2017)
+  - **JL projection** — CSRNG-seeded random projection for high-dimensional updates, preventing adversary pre-computation (PR #36)
+  - **Update norm verification** — `verify_update_norms()` rejects oversized updates server-side (PR #36)
 - **Trimmed Mean** — coordinate-wise outlier trimming (Yin et al., ICML 2018)
 - **FoundationFL** — trust scoring via cosine similarity to root dataset (NDSS 2025)
+  - **Mandatory root update** — requires `root_update` or explicit `allow_untrusted_reference=True` to prevent Byzantine majority from manipulating client mean (PR #37)
 
 ### Secure Aggregation & Encryption
 - **SecAgg+** — Flower's secret-sharing protocol; server sees only the aggregate
+  - **Threshold enforcement** — `reconstruction_threshold < ceil(2*num_shares/3)` now raises `ValueError` instead of warning (PR #36)
 - **Partial Freezing** — reduces SecAgg cost by sending only trainable layers
 - **Homomorphic Encryption** — TenSEAL CKKS for encrypted aggregation (demo-scale)
 
