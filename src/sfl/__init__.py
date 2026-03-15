@@ -8,10 +8,13 @@ __version__ = "0.1.0"
 __author__ = "SFL Team"
 
 from sfl.types import FederationConfig, ClientConfig, ServerConfig
+from sfl.client.inference import BaseInferenceClient, InferenceResult
 
 __all__ = [
     "__version__",
     "FederationConfig",
-    "ClientConfig", 
+    "ClientConfig",
     "ServerConfig",
+    "BaseInferenceClient",
+    "InferenceResult",
 ]

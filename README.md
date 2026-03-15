@@ -20,7 +20,8 @@ This project provides:
 | Application | Description | Runner |
 |-------------|-------------|--------|
 | **Federated Sum** (demo) | Clients contribute secret values, server aggregates | `python jobs/runner.py` |
-| **ESM2 FL** (real ML) | Federated fine-tuning of ESM2 protein language model | `python jobs/esm2_runner.py` |
+| **ESM2 FL** (protein) | Federated fine-tuning of ESM2 protein language model | `python jobs/esm2_runner.py` |
+| **LLM FL** (language) | Federated fine-tuning of causal LMs (GPT-2, with LoRA) | `python jobs/llm_runner.py` |
 
 ## Project Structure
 
@@ -39,6 +40,7 @@ sfl/
 │   ├── types.py                # Shared types: Parameters, Metrics, Config, ClientUpdate
 │   ├── client/
 │   │   ├── base.py             # BaseFederatedClient (abstract, device-aware)
+│   │   ├── inference.py        # BaseInferenceClient (federated inference/eval)
 │   │   ├── dp_client.py        # Per-example DP-SGD via Opacus
 │   │   └── sum_client.py       # SumClient — demo implementation
 │   ├── server/
@@ -52,17 +54,26 @@ sfl/
 │   │   ├── dataset.py          # Protein sequences, MLM masking, IID partitioning
 │   │   ├── client.py           # ESM2Client (extends BaseFederatedClient)
 │   │   └── server.py           # FedAvg seeded with pretrained ESM2 weights
+│   ├── llm/
+│   │   ├── __init__.py         # Exports client_app, server_app
+│   │   ├── config.py           # LLMRunConfig (composes FederationConfig)
+│   │   ├── model.py            # Causal LM load/save, LoRA support
+│   │   ├── dataset.py          # Text dataset, causal LM tokenization
+│   │   ├── client.py           # LLMClient (extends BaseFederatedClient)
+│   │   └── server.py           # FedAvg seeded with pretrained weights
 │   ├── privacy/
 │   │   ├── __init__.py         # Privacy module exports
 │   │   ├── accountant.py       # PLD/PRV privacy accounting + budget enforcement + auxiliary composition
 │   │   ├── adaptive_clip.py    # Adaptive clipping norm (Andrew et al. 2021)
 │   │   ├── audit.py            # PrivacyAuditor — empirical DP validation through real mod chains
 │   │   ├── dp.py               # DP wrappers, noise calibration, accounting wrapper
-│   │   ├── filters.py          # Privacy filters (Percentile, SVT, Compression, Partial Freeze)
-│   │   ├── he.py               # Homomorphic encryption (TenSEAL CKKS)
+│   │   ├── filters.py          # Privacy filters (Percentile, SVT, Compression, Freeze, Adapter)
+│   │   ├── runner_utils.py     # Shared CLI args + privacy mod builder for runners
+│   │   ├── he.py               # Homomorphic encryption (TenSEAL CKKS, demo only)
 │   │   └── secagg.py           # SecAgg+ configuration
 │   └── utils/
 │       ├── config.py           # YAML + env + CLI config management
+│       ├── params.py           # Mixed-precision parameter downcast/upcast
 │       └── logging.py          # Rich/simple/JSON logging
 ├── jobs/
 │   ├── runner.py               # Sum demo — NVFlare SimEnv runner
