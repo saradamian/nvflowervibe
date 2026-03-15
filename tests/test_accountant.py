@@ -221,6 +221,7 @@ class TestPLDComposition:
         assert total_delta == pytest.approx(3e-5)
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not _has_prv_accountant, reason="prv-accountant not installed")
 class TestPRVAccountant:
     """Tests for the Microsoft PRV accountant backend."""

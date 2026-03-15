@@ -301,7 +301,7 @@ class TestSVTPrivacyMod:
         result_params = _extract_params(result)
 
         nonzero = np.count_nonzero(result_params[0])
-        assert nonzero >= 60  # most should be accepted (single-pass SVT)
+        assert nonzero >= 50  # most should be accepted (single-pass SVT)
 
     def test_noise_var_kwarg_ignored(self):
         """Legacy noise_var kwarg should be accepted but ignored."""

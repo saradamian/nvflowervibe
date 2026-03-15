@@ -1,10 +1,14 @@
 """
 Tests for per-example DP-SGD client wrapper.
+
+Marked slow: requires torch + opacus, GPU-heavy.
 """
 
 import numpy as np
 import pytest
 import torch
+
+pytestmark = pytest.mark.slow
 import torch.nn as nn
 from torch.utils.data import Dataset
 

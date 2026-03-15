@@ -586,14 +586,22 @@ class TestLowNoiseWarning:
     """Verify warning is logged when noise_multiplier < 0.3."""
 
     def test_low_noise_warns(self):
-        """noise_multiplier=0.1 should produce a warning."""
-        import logging
+        """noise_multiplier=0.1 should produce a warning about low noise."""
         with patch("sfl.privacy.dp.logger") as mock_logger:
             dp_config = DPConfig(noise_multiplier=0.1, clipping_norm=10.0)
             wrap_strategy_with_dp(FedAvg(), dp_config)
-            mock_logger.warning.assert_called()
-            warning_msg = mock_logger.warning.call_args[0][0]
-            assert "very low" in warning_msg.lower() or "negligible" in warning_msg.lower()
+            # Find the specific low-noise warning among all warnings
+            # (other warnings like "dp-accounting not installed" may also fire)
+            low_noise_found = False
+            for call in mock_logger.warning.call_args_list:
+                msg = call[0][0].lower()
+                if "very low" in msg or "negligible" in msg:
+                    low_noise_found = True
+                    break
+            assert low_noise_found, (
+                "Expected a warning about very low / negligible noise. "
+                f"Got warnings: {[c[0][0] for c in mock_logger.warning.call_args_list]}"
+            )
 
     def test_normal_noise_no_warn(self):
         """noise_multiplier=1.0 should NOT produce a warning about low noise."""

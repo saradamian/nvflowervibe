@@ -8,6 +8,8 @@ compute_update (training), evaluate, get_parameters, and client_fn factory.
 import numpy as np
 import pytest
 import torch
+
+pytestmark = pytest.mark.slow
 from unittest.mock import MagicMock
 
 from sfl.client.base import BaseFederatedClient

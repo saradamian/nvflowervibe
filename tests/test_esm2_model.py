@@ -9,6 +9,8 @@ import numpy as np
 import pytest
 import torch
 
+pytestmark = pytest.mark.slow
+
 from sfl.esm2.model import (
     DEFAULT_MODEL_NAME,
     get_parameters,
