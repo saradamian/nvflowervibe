@@ -80,8 +80,9 @@ src/sfl/
 ├── server/          # Server strategies and aggregation
 ├── esm2/            # ESM2 protein model application
 ├── privacy/         # All privacy mechanisms
-│   ├── accountant.py    # PLD/PRV privacy accounting
+│   ├── accountant.py    # PLD/PRV privacy accounting + auxiliary composition
 │   ├── adaptive_clip.py # Adaptive + per-layer clipping
+│   ├── audit.py         # PrivacyAuditor — empirical DP validation
 │   ├── dp.py            # DP wrappers, noise calibration
 │   ├── filters.py       # Client mods (Percentile, SVT, Compression, Partial Freeze)
 │   ├── he.py            # Homomorphic encryption
@@ -136,6 +137,45 @@ Follow the ESM2 module pattern:
 - For optional dependencies (opacus, tenseal, dp-accounting), use `pytest.mark.skipif`.
 - Test both the happy path and edge cases (empty inputs, invalid configs).
 - Use `_make_train_message()` / `_extract_params()` helpers from `tests/test_filters.py` for mod tests.
+
+### Slow Test Marker
+
+Tests that require heavy dependencies (torch, opacus, dp-accounting PRV) or
+GPU resources must be marked with `@pytest.mark.slow`:
+
+```python
+import pytest
+
+@pytest.mark.slow
+class TestMyHeavyFeature:
+    def test_something(self):
+        ...
+
+# Or for an entire file:
+pytestmark = pytest.mark.slow
+```
+
+CI runs only fast tests (`-m "not slow"`) to keep PR feedback under ~2.5 min.
+The full suite (238 tests: 176 fast + 62 slow) should be run locally before
+merging changes that touch privacy or model code.
+
+### Privacy Auditing in Tests
+
+Use `PrivacyAuditor.run_pipeline_audit()` to validate that new privacy mods
+actually reduce information leakage through the real Flower mod chain:
+
+```python
+from sfl.privacy import PrivacyAuditor
+
+def test_my_mod_reduces_leakage():
+    auditor = PrivacyAuditor(param_shapes=[(1000,)])
+    result = auditor.run_pipeline_audit(
+        params=[np.zeros(1000, dtype=np.float32)],
+        mods=[my_new_mod],
+        num_trials=200,
+    )
+    assert result.passed
+```
 
 ## Privacy and Security
 
