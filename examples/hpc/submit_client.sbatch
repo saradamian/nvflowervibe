@@ -63,11 +63,22 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || ec
 # to reconstruct privacy mods (DP clipping, filters, SecAgg, etc.).
 #
 echo "Client ${SFL_CLIENT_ID} ready on $(hostname)"
+
+# Build TLS flags — use mTLS when certs exist, --insecure otherwise
+TLS_FLAGS=""
+if [ -f "$SFL_TLS_CA_CERT" ] && [ -f "$SFL_TLS_CLIENT_CERT" ] && [ -f "$SFL_TLS_CLIENT_KEY" ]; then
+    TLS_FLAGS="--root-certificates $SFL_TLS_CA_CERT"
+    echo "TLS: mTLS enabled"
+else
+    TLS_FLAGS="--insecure"
+    echo "WARNING: TLS certificates not found — running insecure (dev only)"
+fi
+
 echo "Waiting for server to assign work..."
 
 flower-client-app sfl.esm2:client_app \
     --server-address "$SFL_SERVER_ADDRESS" \
-    --root-certificates "$SFL_TLS_CA_CERT" \
+    $TLS_FLAGS \
     2>&1
 
 EXIT_CODE=$?

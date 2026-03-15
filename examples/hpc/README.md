@@ -73,7 +73,7 @@ This creates a self-signed CA + server/client certificates. For production, use 
 ```
 
 This submits:
-1. A **server job** that starts the Flower gRPC server with mTLS
+1. A **server job** that starts the Flower gRPC server (mTLS when certs exist, insecure otherwise)
 2. N **client jobs** (one per SLURM node) that connect to the server
 
 ### Step 3: Monitor

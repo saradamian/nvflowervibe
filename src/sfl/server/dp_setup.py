@@ -55,6 +55,9 @@ def build_strategy(
     if min_fit_clients is None:
         min_fit_clients = num_clients
 
+    # Resume from checkpoint if configured — overrides initial_parameters
+    initial_parameters = _maybe_resume_from_checkpoint(initial_parameters)
+
     strategy_kwargs: Dict[str, Any] = dict(
         fraction_fit=fraction_fit,
         fraction_evaluate=fraction_evaluate,
@@ -80,8 +83,17 @@ def build_strategy(
             **strategy_kwargs,
         )
     elif aggregation == "foundation-fl":
+        import numpy as np
         from sfl.server.robust import FoundationFLFedAvg
+
+        root_update = None
+        root_path = os.environ.get("SFL_FFL_ROOT_UPDATE")
+        if root_path:
+            root_update = np.load(root_path).flatten()
+            logger.info("FoundationFL root update loaded from %s", root_path)
+
         strategy = FoundationFLFedAvg(
+            root_update=root_update,
             trust_threshold=float(os.environ.get("SFL_FFL_THRESHOLD", "0.1")),
             weighted=os.environ.get("SFL_FFL_WEIGHTED", "true").lower() == "true",
             allow_untrusted_reference=os.environ.get(
@@ -105,6 +117,28 @@ def build_strategy(
     return strategy
 
 
+def _maybe_resume_from_checkpoint(initial_parameters: Parameters) -> Parameters:
+    """If SFL_RESUME=true and a checkpoint exists, replace initial_parameters."""
+    checkpoint_dir = os.environ.get("SFL_CHECKPOINT_DIR")
+    if not checkpoint_dir:
+        return initial_parameters
+    if os.environ.get("SFL_RESUME", "").lower() != "true":
+        return initial_parameters
+
+    from flwr.common import ndarrays_to_parameters
+    from sfl.utils.checkpoint import CheckpointManager
+
+    mgr = CheckpointManager(checkpoint_dir)
+    latest = mgr.load_latest()
+    if latest is None:
+        logger.warning("SFL_RESUME=true but no checkpoint found — starting fresh")
+        return initial_parameters
+
+    round_num, parameters, _metrics = latest
+    logger.info("Resuming from checkpoint round %d", round_num)
+    return ndarrays_to_parameters(parameters)
+
+
 def _apply_checkpoint_if_enabled(strategy: Strategy) -> Strategy:
     """Wrap strategy with checkpointing if SFL_CHECKPOINT_DIR is set."""
     checkpoint_dir = os.environ.get("SFL_CHECKPOINT_DIR")
@@ -113,15 +147,8 @@ def _apply_checkpoint_if_enabled(strategy: Strategy) -> Strategy:
 
     from sfl.utils.checkpoint import CheckpointManager, make_checkpoint_strategy
 
-    resume = os.environ.get("SFL_RESUME", "").lower() == "true"
     mgr = CheckpointManager(checkpoint_dir)
-
-    if resume:
-        latest = mgr.load_latest()
-        if latest is not None:
-            logger.info("Resuming from checkpoint round %d", latest["round"])
-
-    logger.info("Checkpoint enabled: dir=%s, resume=%s", checkpoint_dir, resume)
+    logger.info("Checkpoint enabled: dir=%s", checkpoint_dir)
     return make_checkpoint_strategy(strategy, mgr)
 
 

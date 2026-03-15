@@ -118,22 +118,7 @@ pip install -U pip wheel setuptools
 pip install -r requirements.txt
 ```
 
-### 2. Run the Sum Demo
-
-```bash
-# Default: 2 clients, 3 rounds
-python jobs/esm2_runner.py
-
-# Custom
-python jobs/esm2_runner.py --num-clients 4 --num-rounds 3
-```
-
-Expected output:
-```
-[server] round=1 client_vals=[7.0, 8.0] federated_sum=15.0
-```
-
-### 3. Run ESM2 Federated Training
+### 2. Run ESM2 Federated Training
 
 ```bash
 # Quick demo — 2 clients, 3 rounds, 8M-param ESM2 model
@@ -151,7 +136,7 @@ python jobs/esm2_runner.py --backend nvflare --num-clients 2 --num-rounds 2
 
 GPU auto-detection: if CUDA GPUs are available, they are automatically allocated across simulation clients.
 
-### 4. Privacy & Security
+### 3. Privacy & Security
 
 SFL supports layered privacy: DP with automatic budget enforcement,
 adaptive clipping, per-example DP-SGD, privacy filters, gradient
@@ -220,7 +205,7 @@ python jobs/esm2_runner.py --dp --dp-adaptive-clip \
 See [docs/PRIVACY.md](docs/PRIVACY.md) for the full privacy guide,
 including HE limitations, confidential computing, and trade-off analysis.
 
-### 5. Run Tests
+### 4. Run Tests
 
 ```bash
 # Fast tests only (CI default, ~2.5 min)
