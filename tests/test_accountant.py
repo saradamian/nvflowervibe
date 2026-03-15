@@ -280,6 +280,25 @@ class TestPRVAccountant:
         assert low <= est <= high
         assert low > 0
 
+    def test_prv_tight_eps_error_narrows_bounds(self):
+        """Smaller eps_error should produce tighter (high-low) interval."""
+        acc_loose = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, enforce_budget=False,
+            backend="prv", eps_error=0.1,
+        )
+        acc_tight = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, enforce_budget=False,
+            backend="prv", eps_error=0.01,
+        )
+        for _ in range(5):
+            acc_loose.step()
+            acc_tight.step()
+        loose_bounds = acc_loose.epsilon_bounds
+        tight_bounds = acc_tight.epsilon_bounds
+        loose_width = loose_bounds[2] - loose_bounds[0]
+        tight_width = tight_bounds[2] - tight_bounds[0]
+        assert tight_width < loose_width
+
     def test_prv_budget_exhausted(self):
         """PRV backend should respect budget enforcement."""
         acc = PrivacyAccountant(

@@ -730,6 +730,19 @@ class TestSVTSinglePass:
 
         assert nz1 == nz2
 
+    def test_acceptance_rate_in_metrics(self):
+        """SVT should store acceptance rate in fit_res metrics."""
+        params = [np.ones(100, dtype=np.float32)]
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_svt_privacy_mod(fraction=0.5, epsilon=1.0, gamma=1.0, tau=0.0)
+        result = mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg))
+
+        fit_res = compat.recorddict_to_fitres(result.content, keep_input=True)
+        assert "svt_acceptance_rate" in fit_res.metrics
+        rate = fit_res.metrics["svt_acceptance_rate"]
+        assert 0.0 <= rate <= 1.0
+
 
 # ── PercentilePrivacy L2 Sensitivity Tests ──────────────────────────────────
 

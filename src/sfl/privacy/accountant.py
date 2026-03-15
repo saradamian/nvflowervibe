@@ -114,6 +114,9 @@ class PrivacyAccountant:
         num_total: Total number of clients in the pool. Required
             for per-round participation tracking via ``step()``.
         backend: ``"pld"`` or ``"prv"``.
+        eps_error: Error tolerance for PRV epsilon computation.
+            Lower values give tighter bounds but cost more compute.
+            Default 0.01 (±1%). Only used with ``backend="prv"``.
     """
 
     def __init__(
@@ -125,6 +128,7 @@ class PrivacyAccountant:
         enforce_budget: bool = True,
         num_total: Optional[int] = None,
         backend: Literal["pld", "prv"] = "pld",
+        eps_error: float = 0.01,
     ):
         self._backend = backend
         self._noise_multiplier = noise_multiplier
@@ -134,6 +138,7 @@ class PrivacyAccountant:
         self._enforce_budget = enforce_budget
         self._rounds = 0
         self._num_total = num_total
+        self._eps_error = eps_error
         # PRV error bounds: (eps_low, eps_estimate, eps_high)
         self._prv_bounds: Optional[Tuple[float, float, float]] = None
 
@@ -186,7 +191,7 @@ class PrivacyAccountant:
         acc = _PRVAccountant(
             prvs=[self._prv_mechanism],
             max_self_compositions=[max_comp],
-            eps_error=0.1,
+            eps_error=self._eps_error,
             delta_error=self._delta * 1e-3,
         )
         low, est, high = acc.compute_epsilon(

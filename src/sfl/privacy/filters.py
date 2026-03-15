@@ -292,9 +292,17 @@ def make_svt_privacy_mod(
         accepted = candidate_idx[above].tolist()
 
         if len(accepted) < n_upload:
-            log(WARNING, "SVT: accepted only %d/%d params in single pass "
-                "(consider increasing epsilon or pre_screen_ratio)",
-                len(accepted), n_upload)
+            acceptance_rate = len(accepted) / max(n_upload, 1)
+            log(WARNING,
+                "SVT: accepted only %d/%d params (%.0f%%) in single pass. "
+                "The effective sparsity is much higher than configured "
+                "(fraction=%.2f). Consider increasing epsilon, lowering "
+                "tau, or raising pre_screen_ratio.",
+                len(accepted), n_upload, 100.0 * acceptance_rate, cfg.fraction)
+            if len(accepted) == 0:
+                log(WARNING,
+                    "SVT: zero params accepted — returning zero update. "
+                    "This round contributes no gradient information.")
 
         # Sample exactly n_upload if we got more
         if len(accepted) > n_upload:
@@ -308,10 +316,11 @@ def make_svt_privacy_mod(
             delta_w[accepted_arr] + output_noise, -cfg.gamma, cfg.gamma,
         )
 
+        actual_fraction = len(accepted) / max(n_total, 1)
         log(
             INFO,
-            "svt_privacy_mod: selected %d/%d params (fraction=%.2f, eps=%.3f)",
-            len(accepted), n_total, cfg.fraction, cfg.epsilon,
+            "svt_privacy_mod: selected %d/%d params (target=%.2f, actual=%.3f, eps=%.3f)",
+            len(accepted), n_total, cfg.fraction, actual_fraction, cfg.epsilon,
         )
 
         # Reshape back to original parameter shapes
@@ -325,6 +334,8 @@ def make_svt_privacy_mod(
             offset += size
 
         fit_res.parameters = ndarrays_to_parameters(filtered)
+        # Store acceptance rate for monitoring
+        fit_res.metrics["svt_acceptance_rate"] = float(actual_fraction)
         out_msg.content = compat.fitres_to_recorddict(fit_res, keep_input=True)
         return out_msg
 
