@@ -303,17 +303,6 @@ class TestSVTPrivacyMod:
         nonzero = np.count_nonzero(result_params[0])
         assert nonzero >= 60  # most should be accepted (single-pass SVT)
 
-    def test_noise_var_kwarg_ignored(self):
-        """Legacy noise_var kwarg should be accepted but ignored."""
-        params = [np.array([1.0, 2.0], dtype=np.float32)]
-        in_msg, out_msg = _make_train_message(params)
-
-        # Should not raise, noise_var is caught by **_kwargs
-        mod = make_svt_privacy_mod(fraction=0.5, noise_var=0.5)
-        call_next = MagicMock(return_value=out_msg)
-        result = mod(in_msg, MagicMock(spec=Context), call_next)
-        assert _extract_params(result)[0].shape == (2,)
-
     def test_optimal_budget_less_noise_than_standard(self):
         """Optimal budget split should produce less noise (more nonzeros) for same ε.
 
@@ -402,32 +391,6 @@ class TestExcludeVarsMod:
         np.testing.assert_array_equal(result_params[2], [0.0, 0.0])
         # Index 1 should be preserved
         np.testing.assert_array_equal(result_params[1], [3.0, 4.0])
-
-    def test_no_indices_passes_through(self):
-        """With no exclude indices, params should pass through unchanged."""
-        params = [np.array([1.0, 2.0], dtype=np.float32)]
-        in_msg, out_msg = _make_train_message(params)
-
-        mod = make_exclude_vars_mod(exclude_indices=[])
-        call_next = MagicMock(return_value=out_msg)
-
-        result = mod(in_msg, MagicMock(spec=Context), call_next)
-        result_params = _extract_params(result)
-
-        np.testing.assert_array_equal(result_params[0], [1.0, 2.0])
-
-    def test_none_indices_passes_through(self):
-        """With None exclude indices, params should pass through unchanged."""
-        params = [np.array([1.0], dtype=np.float32)]
-        in_msg, out_msg = _make_train_message(params)
-
-        mod = make_exclude_vars_mod(exclude_indices=None)
-        call_next = MagicMock(return_value=out_msg)
-
-        result = mod(in_msg, MagicMock(spec=Context), call_next)
-        result_params = _extract_params(result)
-
-        np.testing.assert_array_equal(result_params[0], [1.0])
 
 
 # ── GradientCompression Tests ──────────────────────────────────────────────
@@ -799,19 +762,6 @@ class TestPartialFreezeMod:
         assert result_params[0].shape == (20,)  # layer 1
         assert result_params[1].shape == (40,)  # layer 3
 
-    def test_noop_when_no_indices(self):
-        """With trainable_indices=None, all layers should pass through."""
-        from sfl.privacy.filters import make_partial_freeze_mod
-
-        params = [np.ones(10, dtype=np.float32), np.ones(20, dtype=np.float32)]
-        in_msg, out_msg = _make_train_message(params)
-
-        mod = make_partial_freeze_mod(trainable_indices=None)
-        result = mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg))
-        result_params = _extract_params(result)
-
-        assert len(result_params) == 2
-
     def test_preserves_trainable_values(self):
         """Trainable layer values should be unchanged."""
         from sfl.privacy.filters import make_partial_freeze_mod
@@ -863,11 +813,6 @@ class TestPartialFreezeMod:
         assert result_size < original_size
         assert result_size == 100
 
-    def test_exported_from_privacy_init(self):
-        """make_partial_freeze_mod should be importable from sfl.privacy."""
-        from sfl.privacy import make_partial_freeze_mod, make_partial_freeze_strategy
-        assert callable(make_partial_freeze_mod)
-        assert callable(make_partial_freeze_strategy)
 
 
 

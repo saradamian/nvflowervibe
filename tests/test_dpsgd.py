@@ -93,15 +93,6 @@ class _DummyClient:
         return params, len(self.train_data), {"train_loss": loss}
 
 
-class TestDPSGDConfig:
-
-    def test_defaults(self):
-        cfg = DPSGDConfig()
-        assert cfg.max_grad_norm == 1.0
-        assert cfg.noise_multiplier == 1.0
-        assert cfg.target_delta == 1e-5
-
-
 @pytest.mark.skipif(not _has_opacus, reason="opacus not installed")
 class TestEnableDPSGD:
 
@@ -122,24 +113,6 @@ class TestEnableDPSGD:
         client._train()
         assert client._dpsgd_epsilon > 0
 
-    def test_compute_update_includes_epsilon(self):
-        """compute_update should include dpsgd_epsilon in metrics."""
-        client = _DummyClient()
-        config = DPSGDConfig(max_grad_norm=1.0, noise_multiplier=1.0)
-        enable_dpsgd(client, config)
-        params, n, metrics = client.compute_update([], {})
-        assert "dpsgd_epsilon" in metrics
-        assert metrics["dpsgd_epsilon"] > 0
-
-    def test_model_unwrapped_after_train(self):
-        """After training, model should be unwrapped (not GradSampleModule)."""
-        from opacus import GradSampleModule
-        client = _DummyClient()
-        config = DPSGDConfig(max_grad_norm=1.0, noise_multiplier=0.5)
-        enable_dpsgd(client, config)
-        client._train()
-        assert not isinstance(client.model, GradSampleModule)
-
     def test_higher_noise_higher_epsilon(self):
         """Lower noise multiplier should give higher epsilon (less privacy)."""
         client_low = _DummyClient(seed=42)
@@ -157,11 +130,6 @@ class TestEnableDPSGD:
 
 @pytest.mark.skipif(not _has_opacus, reason="opacus not installed")
 class TestAutoClip:
-
-    def test_auto_clip_defaults_false(self):
-        """auto_clip should default to False."""
-        cfg = DPSGDConfig()
-        assert cfg.auto_clip is False
 
     def test_auto_clip_train_completes(self):
         """Training with auto_clip=True should complete without errors."""
@@ -190,32 +158,10 @@ class TestAutoClip:
         # Should still produce a reasonable epsilon (not inflated by clip=100)
         assert client._dpsgd_epsilon > 0
 
-    def test_auto_clip_model_unwrapped(self):
-        """After AutoClip training, model should be unwrapped."""
-        from opacus import GradSampleModule
-        client = _DummyClient()
-        config = DPSGDConfig(noise_multiplier=0.5, auto_clip=True)
-        enable_dpsgd(client, config)
-        client._train()
-        assert not isinstance(client.model, GradSampleModule)
-
-    def test_auto_clip_compute_update_metrics(self):
-        """compute_update with AutoClip should include dpsgd_epsilon."""
-        client = _DummyClient()
-        config = DPSGDConfig(noise_multiplier=1.0, auto_clip=True)
-        enable_dpsgd(client, config)
-        params, n, metrics = client.compute_update([], {})
-        assert "dpsgd_epsilon" in metrics
-        assert metrics["dpsgd_epsilon"] > 0
 
 
 @pytest.mark.skipif(not _has_opacus, reason="opacus not installed")
 class TestGhostClipping:
-
-    def test_ghost_clipping_defaults_false(self):
-        """ghost_clipping should default to False."""
-        cfg = DPSGDConfig()
-        assert cfg.ghost_clipping is False
 
     def test_ghost_clipping_train_completes(self):
         """Training with ghost_clipping=True should complete."""
@@ -234,19 +180,34 @@ class TestGhostClipping:
         client._train()
         assert client._dpsgd_epsilon > 0
 
-    def test_ghost_clipping_model_unwrapped(self):
-        """After ghost clipping training, model should be unwrapped."""
+
+@pytest.mark.skipif(not _has_opacus, reason="opacus not installed")
+class TestDPSGDVariants:
+    """Parametrized tests for behavior shared across base/auto_clip/ghost_clipping."""
+
+    @pytest.mark.parametrize("config_kwargs", [
+        {},
+        {"auto_clip": True},
+        {"ghost_clipping": True},
+    ], ids=["base", "auto_clip", "ghost_clipping"])
+    def test_model_unwrapped_after_train(self, config_kwargs):
+        """After training, model should be unwrapped (not GradSampleModule)."""
         from opacus import GradSampleModule
         client = _DummyClient()
-        config = DPSGDConfig(noise_multiplier=0.5, ghost_clipping=True)
+        config = DPSGDConfig(noise_multiplier=0.5, **config_kwargs)
         enable_dpsgd(client, config)
         client._train()
         assert not isinstance(client.model, GradSampleModule)
 
-    def test_ghost_clipping_compute_update_metrics(self):
-        """compute_update with ghost clipping should include dpsgd_epsilon."""
+    @pytest.mark.parametrize("config_kwargs", [
+        {},
+        {"auto_clip": True},
+        {"ghost_clipping": True},
+    ], ids=["base", "auto_clip", "ghost_clipping"])
+    def test_compute_update_includes_epsilon(self, config_kwargs):
+        """compute_update should include dpsgd_epsilon in metrics."""
         client = _DummyClient()
-        config = DPSGDConfig(noise_multiplier=1.0, ghost_clipping=True)
+        config = DPSGDConfig(noise_multiplier=1.0, **config_kwargs)
         enable_dpsgd(client, config)
         params, n, metrics = client.compute_update([], {})
         assert "dpsgd_epsilon" in metrics

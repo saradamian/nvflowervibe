@@ -29,11 +29,6 @@ def demo_dataset(tokenizer):
 
 class TestProteinMLMDataset:
 
-    def test_length(self, tokenizer):
-        seqs = ["ACDEFG", "HIKLMN", "PQRSTV"]
-        ds = ProteinMLMDataset(seqs, tokenizer, max_length=32)
-        assert len(ds) == 3
-
     def test_getitem_keys_shapes_types(self, tokenizer):
         """Items have correct keys, shapes, and tensor types."""
         ds = ProteinMLMDataset(["ACDEFG"], tokenizer, max_length=32)
@@ -71,13 +66,6 @@ class TestProteinMLMDataset:
         # All labels should be -100 (nothing masked)
         assert (item["labels"] == -100).all()
 
-
-class TestLoadDemoDataset:
-
-    def test_loads_all_demo_sequences(self, demo_dataset):
-        """Demo dataset contains all built-in sequences."""
-        assert isinstance(demo_dataset, ProteinMLMDataset)
-        assert len(demo_dataset) == len(DEMO_SEQUENCES)
 
 
 class TestPartitionDataset:

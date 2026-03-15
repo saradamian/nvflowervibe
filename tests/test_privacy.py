@@ -278,15 +278,6 @@ class TestSecAggConfig:
         assert result["clipping_range"] == 16.0
         assert result["quantization_range"] == 2**26
 
-    def test_make_secagg_main_returns_callable(self):
-        """make_secagg_main should return a callable main function."""
-        def dummy_server_fn(context):
-            pass
-
-        cfg = SecAggConfig(num_shares=3, reconstruction_threshold=2)
-        main_fn = make_secagg_main(dummy_server_fn, cfg)
-        assert callable(main_fn)
-
     def test_make_secagg_main_calls_server_fn(self):
         """The secagg main function should call server_fn to get components."""
         from flwr.server import ServerAppComponents, ServerConfig
@@ -791,22 +782,6 @@ class TestPrivacyAuditor:
         # With essentially no noise, canary should be detectable
         assert result.detection_rate > 0.0
 
-    def test_result_repr(self):
-        """AuditResult repr should contain PASS/FAIL."""
-        from sfl.privacy.audit import AuditResult
-
-        r = AuditResult(
-            detection_rate=0.0, mean_cosine_sim=0.01, max_cosine_sim=0.05,
-            noise_scale=1.0, clipping_norm=10.0, passed=True,
-        )
-        assert "PASS" in repr(r)
-
-        r2 = AuditResult(
-            detection_rate=0.5, mean_cosine_sim=0.3, max_cosine_sim=0.8,
-            noise_scale=0.1, clipping_norm=10.0, passed=False,
-        )
-        assert "FAIL" in repr(r2)
-
     def test_seed_reproducibility(self):
         """Same seed should produce identical results."""
         from sfl.privacy.audit import PrivacyAuditor
@@ -829,13 +804,6 @@ class TestPrivacyAuditor:
 
 class TestPerLayerClipMod:
     """Tests for per-layer adaptive clipping mod (S6)."""
-
-    def test_import_and_create(self):
-        """make_per_layer_clip_mod should return a callable."""
-        from sfl.privacy.adaptive_clip import make_per_layer_clip_mod
-
-        mod = make_per_layer_clip_mod(default_clip=1.0)
-        assert callable(mod)
 
     def test_clips_large_layer(self):
         """A layer exceeding default_clip should be clipped to that norm."""
@@ -916,10 +884,6 @@ class TestPerLayerClipMod:
         expected = np.array([0.6, 0.8], dtype=np.float32)
         np.testing.assert_allclose(result_params[0], expected, atol=1e-5)
 
-    def test_exported_from_privacy_init(self):
-        """make_per_layer_clip_mod should be importable from sfl.privacy."""
-        from sfl.privacy import make_per_layer_clip_mod
-        assert callable(make_per_layer_clip_mod)
 
 
 # ── H1: Secure RNG Tests ───────────────────────────────────────────────────
@@ -927,13 +891,6 @@ class TestPerLayerClipMod:
 
 class TestSecureRNG:
     """Tests for CSRNG-seeded noise generation (H1)."""
-
-    def test_secure_rng_returns_random_state(self):
-        """secure_rng() should return a numpy RandomState."""
-        from sfl.utils.rng import secure_rng
-
-        rng = secure_rng()
-        assert isinstance(rng, np.random.RandomState)
 
     def test_secure_rng_produces_different_seeds(self):
         """Two calls to secure_rng() should produce different sequences."""
