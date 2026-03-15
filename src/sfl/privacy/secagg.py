@@ -49,13 +49,12 @@ class SecAggConfig:
         import math
         min_threshold = math.ceil(2 * self.num_shares / 3)
         if self.reconstruction_threshold < min_threshold:
-            from sfl.utils.logging import get_logger
-            get_logger(__name__).warning(
-                "SecAgg+ reconstruction_threshold=%d is below the "
-                "recommended minimum ceil(2*num_shares/3)=%d. With a "
-                "low threshold, fewer colluding nodes can reconstruct "
-                "individual updates. Consider threshold >= %d.",
-                self.reconstruction_threshold, min_threshold, min_threshold,
+            raise ValueError(
+                f"SecAgg+ reconstruction_threshold={self.reconstruction_threshold} "
+                f"is below the minimum ceil(2*num_shares/3)={min_threshold}. "
+                f"A low threshold allows server + colluding clients to "
+                f"reconstruct individual updates, breaking SecAgg's "
+                f"privacy guarantee. Use threshold >= {min_threshold}."
             )
         if self.reconstruction_threshold > self.num_shares:
             raise ValueError(

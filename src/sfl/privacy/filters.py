@@ -633,8 +633,17 @@ def make_partial_freeze_mod(
             n_kept, n_original, kept_size, original_size, 100.0 * reduction)
 
         fit_res.parameters = ndarrays_to_parameters(filtered)
-        # Store the trainable indices in metrics so the server can reconstruct
+        # Store the trainable indices and frozen layer shapes so the server
+        # can reconstruct the full parameter array with correct shapes.
         fit_res.metrics["_trainable_indices"] = ",".join(str(i) for i in sorted(_indices))
+        frozen_shapes = {
+            str(i): ",".join(str(s) for s in p.shape)
+            for i, p in enumerate(params)
+            if i not in _indices
+        }
+        fit_res.metrics["_frozen_shapes"] = ";".join(
+            f"{k}:{v}" for k, v in frozen_shapes.items()
+        )
         out_msg.content = compat.fitres_to_recorddict(fit_res, keep_input=True)
         return out_msg
 
@@ -680,21 +689,40 @@ def make_partial_freeze_strategy(
             max_idx = max(indices) if indices else 0
             total_layers = max_idx + 1
 
-            # Build full parameter array with zeros for frozen layers
+            # Parse frozen layer shapes from client metadata
+            frozen_shapes: dict = {}
+            shapes_str = res.metrics.get("_frozen_shapes", "")
+            if shapes_str:
+                for entry in shapes_str.split(";"):
+                    if ":" not in entry:
+                        continue
+                    idx_s, shape_s = entry.split(":", 1)
+                    frozen_shapes[int(idx_s)] = tuple(
+                        int(d) for d in shape_s.split(",")
+                    )
+
+            # Build full parameter array with correctly-shaped zeros
+            # for frozen layers
             full_params = []
             partial_iter = iter(partial_params)
             for i in range(total_layers):
                 if i in set(indices):
                     full_params.append(next(partial_iter))
+                elif i in frozen_shapes:
+                    full_params.append(
+                        np.zeros(frozen_shapes[i], dtype=np.float32)
+                    )
                 else:
-                    # Frozen layer — we need a zero placeholder
-                    # The shape is unknown here, so we use a scalar zero
-                    # The aggregation will handle shape matching
-                    full_params.append(np.zeros(1, dtype=np.float32))
+                    raise ValueError(
+                        f"Frozen layer {i} has no shape metadata — "
+                        f"cannot reconstruct. Ensure client uses "
+                        f"make_partial_freeze_mod from this version."
+                    )
 
-            # Clean up the internal metric before passing to inner strategy
+            # Clean up internal metrics before passing to inner strategy
             metrics = dict(res.metrics)
             metrics.pop("_trainable_indices", None)
+            metrics.pop("_frozen_shapes", None)
 
             expanded_res = FitRes(
                 status=res.status,

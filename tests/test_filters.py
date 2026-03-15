@@ -844,6 +844,73 @@ class TestPartialFreezeMod:
         assert "_trainable_indices" in fit_res.metrics
         assert fit_res.metrics["_trainable_indices"] == "0,2"
 
+    def test_stores_frozen_shapes_in_metrics(self):
+        """Frozen layer shapes should be stored so server can reconstruct."""
+        from sfl.privacy.filters import make_partial_freeze_mod
+
+        params = [
+            np.ones((768, 3072), dtype=np.float32),  # layer 0 (frozen)
+            np.ones(100, dtype=np.float32),           # layer 1 (trainable)
+            np.ones((512, 512), dtype=np.float32),    # layer 2 (frozen)
+        ]
+        in_msg, out_msg = _make_train_message(params)
+
+        mod = make_partial_freeze_mod(trainable_indices=[1])
+        result = mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg))
+
+        fit_res = compat.recorddict_to_fitres(result.content, keep_input=True)
+        assert "_frozen_shapes" in fit_res.metrics
+        shapes_str = fit_res.metrics["_frozen_shapes"]
+        # Should contain entries for layers 0 and 2
+        assert "0:768,3072" in shapes_str
+        assert "2:512,512" in shapes_str
+
+    def test_strategy_restores_correct_shapes(self):
+        """Server-side strategy should restore frozen layers with correct shapes."""
+        from sfl.privacy.filters import make_partial_freeze_mod, make_partial_freeze_strategy
+
+        original_params = [
+            np.ones((10, 20), dtype=np.float32),  # layer 0 (frozen)
+            np.full(30, 2.0, dtype=np.float32),    # layer 1 (trainable)
+            np.ones((5, 5, 3), dtype=np.float32),  # layer 2 (frozen)
+            np.full(15, 3.0, dtype=np.float32),    # layer 3 (trainable)
+        ]
+        in_msg, out_msg = _make_train_message(original_params)
+
+        # Client side: strip frozen layers
+        mod = make_partial_freeze_mod(trainable_indices=[1, 3])
+        result = mod(in_msg, MagicMock(spec=Context), MagicMock(return_value=out_msg))
+        fit_res = compat.recorddict_to_fitres(result.content, keep_input=True)
+
+        # Server side: wrap a mock strategy, capturing the inner call
+        inner_aggregate = MagicMock(return_value=(None, {}))
+        mock_strategy = MagicMock()
+        mock_strategy.aggregate_fit = inner_aggregate
+        make_partial_freeze_strategy(mock_strategy, trainable_indices=[1, 3])
+
+        # Simulate calling aggregate_fit with partial results
+        from flwr.server.client_proxy import ClientProxy
+        proxy = MagicMock(spec=ClientProxy)
+        mock_strategy.aggregate_fit(1, [(proxy, fit_res)], [])
+
+        # Get the expanded results passed to the original (inner) aggregate_fit
+        inner_aggregate.assert_called_once()
+        call_args = inner_aggregate.call_args
+        expanded_results = call_args[0][1]
+        expanded_params = parameters_to_ndarrays(expanded_results[0][1].parameters)
+
+        assert len(expanded_params) == 4
+        assert expanded_params[0].shape == (10, 20)   # frozen, correct shape
+        assert expanded_params[1].shape == (30,)       # trainable, preserved
+        assert expanded_params[2].shape == (5, 5, 3)   # frozen, correct shape
+        assert expanded_params[3].shape == (15,)       # trainable, preserved
+        # Frozen layers should be zeros
+        np.testing.assert_array_equal(expanded_params[0], np.zeros((10, 20)))
+        np.testing.assert_array_equal(expanded_params[2], np.zeros((5, 5, 3)))
+        # Trainable layers should be preserved
+        np.testing.assert_array_equal(expanded_params[1], np.full(30, 2.0))
+        np.testing.assert_array_equal(expanded_params[3], np.full(15, 3.0))
+
     def test_size_reduction(self):
         """Output should be smaller than input when layers are frozen."""
         from sfl.privacy.filters import make_partial_freeze_mod

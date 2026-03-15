@@ -270,7 +270,7 @@ class TestSecAggConfig:
     def test_custom_clipping_and_quantization(self):
         cfg = SecAggConfig(
             num_shares=5,
-            reconstruction_threshold=3,
+            reconstruction_threshold=4,  # ceil(2*5/3)=4, minimum valid
             clipping_range=16.0,
             quantization_range=2**26,
         )
@@ -312,12 +312,11 @@ class TestSecAggConfig:
         # the function was created and server_fn would be called
         assert callable(main_fn)
 
-    def test_low_threshold_warns(self):
-        """reconstruction_threshold below ceil(2n/3) should warn (C2)."""
-        # ceil(2*4/3)=3, threshold=2 < 3 should trigger logger warning
-        # Just verify it succeeds without raising
-        cfg = SecAggConfig(num_shares=4, reconstruction_threshold=2)
-        assert cfg.reconstruction_threshold == 2
+    def test_low_threshold_raises(self):
+        """reconstruction_threshold below ceil(2n/3) should raise (C2)."""
+        # ceil(2*4/3)=3, threshold=2 < 3 → must raise ValueError
+        with pytest.raises(ValueError, match="below the minimum"):
+            SecAggConfig(num_shares=4, reconstruction_threshold=2)
 
     def test_threshold_exceeds_shares_raises(self):
         """reconstruction_threshold > num_shares should raise ValueError."""
