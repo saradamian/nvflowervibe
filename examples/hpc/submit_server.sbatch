@@ -10,7 +10,8 @@
 #
 # SFL Federated Learning Server — SLURM Job Script
 #
-# Starts the Flower gRPC server with mTLS and waits for clients.
+# Starts the Flower gRPC server and waits for clients.
+# Uses mTLS when certificates exist in SFL_CERTS_DIR, otherwise --insecure.
 #
 # Usage:
 #   sbatch submit_server.sbatch
@@ -71,11 +72,22 @@ echo "Starting SFL Flower server: ${SFL_NUM_CLIENTS} clients, ${SFL_NUM_ROUNDS} 
 echo "Model: ${SFL_MODEL}"
 echo "Checkpoint dir: ${SFL_CHECKPOINT_DIR}"
 echo "Metrics dir: ${SFL_METRICS_DIR}"
+
+# Build TLS flags — use mTLS when certs exist, --insecure otherwise
+TLS_FLAGS=""
+if [ -f "$SFL_TLS_CA_CERT" ] && [ -f "$SFL_TLS_SERVER_CERT" ] && [ -f "$SFL_TLS_SERVER_KEY" ]; then
+    TLS_FLAGS="--ssl-ca-certfile $SFL_TLS_CA_CERT --ssl-certfile $SFL_TLS_SERVER_CERT --ssl-keyfile $SFL_TLS_SERVER_KEY"
+    echo "TLS: mTLS enabled"
+else
+    TLS_FLAGS="--insecure"
+    echo "WARNING: TLS certificates not found — running insecure (dev only)"
+fi
 echo "---"
 
 flower-server-app sfl.esm2:server_app \
-    --insecure \
+    $TLS_FLAGS \
     --server-address "$SFL_SERVER_ADDRESS" \
+    --run-config "num-server-rounds=${SFL_NUM_ROUNDS} num-clients=${SFL_NUM_CLIENTS} esm2-model=${SFL_MODEL}" \
     2>&1
 
 EXIT_CODE=$?

@@ -39,10 +39,16 @@ class MetricsCollector:
     for dashboards and experiment tracking.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        output_dir: Optional[str] = None,
+        export_format: str = "csv",
+    ) -> None:
         self._rounds: List[int] = []
         self._server_metrics: List[Dict[str, Any]] = []
         self._client_metrics: List[Optional[List[Dict[str, Any]]]] = []
+        self._output_dir = output_dir
+        self._export_format = export_format
 
     def record_round(
         self,
@@ -140,6 +146,24 @@ class MetricsCollector:
             }
 
         return result
+
+    def export(self) -> None:
+        """Export collected metrics to the configured output directory.
+
+        Uses ``output_dir`` and ``export_format`` from ``__init__``.
+        Supported formats: ``csv``, ``json``, ``tensorboard``, ``all``.
+        No-op if ``output_dir`` was not set.
+        """
+        if not self._output_dir or not self._rounds:
+            return
+
+        fmt = self._export_format.lower()
+        if fmt in ("csv", "all"):
+            save_metrics_csv(self, os.path.join(self._output_dir, "metrics.csv"))
+        if fmt in ("json", "all"):
+            save_metrics_json(self, os.path.join(self._output_dir, "metrics.json"))
+        if fmt in ("tensorboard", "all"):
+            save_metrics_tensorboard(self, self._output_dir)
 
 
 # ── Export functions ─────────────────────────────────────────────────────
@@ -272,6 +296,7 @@ class _MetricsWrapper(Strategy):
         if metrics:
             client_metrics = self._extract_client_metrics(results)
             self._collector.record_round(server_round, metrics, client_metrics)
+            self._collector.export()
 
         return params, metrics
 
