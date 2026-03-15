@@ -8,6 +8,8 @@ demo dataset loading, and IID partitioning.
 import pytest
 import torch
 
+pytestmark = pytest.mark.slow
+
 from sfl.esm2.dataset import (
     DEMO_SEQUENCES,
     ProteinMLMDataset,

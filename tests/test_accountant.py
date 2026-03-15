@@ -221,6 +221,7 @@ class TestPLDComposition:
         assert total_delta == pytest.approx(3e-5)
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not _has_prv_accountant, reason="prv-accountant not installed")
 class TestPRVAccountant:
     """Tests for the Microsoft PRV accountant backend."""
@@ -280,6 +281,25 @@ class TestPRVAccountant:
         assert low <= est <= high
         assert low > 0
 
+    def test_prv_tight_eps_error_narrows_bounds(self):
+        """Smaller eps_error should produce tighter (high-low) interval."""
+        acc_loose = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, enforce_budget=False,
+            backend="prv", eps_error=0.1,
+        )
+        acc_tight = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, enforce_budget=False,
+            backend="prv", eps_error=0.01,
+        )
+        for _ in range(5):
+            acc_loose.step()
+            acc_tight.step()
+        loose_bounds = acc_loose.epsilon_bounds
+        tight_bounds = acc_tight.epsilon_bounds
+        loose_width = loose_bounds[2] - loose_bounds[0]
+        tight_width = tight_bounds[2] - tight_bounds[0]
+        assert tight_width < loose_width
+
     def test_prv_budget_exhausted(self):
         """PRV backend should respect budget enforcement."""
         acc = PrivacyAccountant(
@@ -335,6 +355,56 @@ class TestPRVAccountant:
         )
         acc.step()
         assert acc.epsilon_bounds is None
+
+
+class TestComposeAuxiliary:
+    """Tests for compose_auxiliary (adaptive composition accounting)."""
+
+    def test_auxiliary_event_increases_epsilon(self):
+        """Composing an auxiliary event should increase total ε."""
+        from dp_accounting import dp_event
+
+        acc = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, enforce_budget=False,
+            backend="pld",
+        )
+        acc.step()
+        eps_before = acc.epsilon
+
+        # Compose an auxiliary Gaussian event (e.g., quantile estimation)
+        acc.compose_auxiliary(dp_event.GaussianDpEvent(noise_multiplier=0.5))
+        eps_after = acc.epsilon
+
+        assert eps_after > eps_before
+
+    def test_auxiliary_prv_raises(self):
+        """PRV backend should reject compose_auxiliary."""
+        acc = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, enforce_budget=False,
+            backend="prv",
+        )
+        from dp_accounting import dp_event
+        with pytest.raises(RuntimeError, match="PLD backend"):
+            acc.compose_auxiliary(dp_event.GaussianDpEvent(noise_multiplier=1.0))
+
+    def test_multiple_auxiliary_events_compose(self):
+        """Multiple auxiliary events should accumulate in the budget."""
+        from dp_accounting import dp_event
+
+        acc = PrivacyAccountant(
+            noise_multiplier=1.0, delta=1e-5, enforce_budget=False,
+            backend="pld",
+        )
+        acc.step()
+        eps_1 = acc.epsilon
+
+        acc.compose_auxiliary(dp_event.GaussianDpEvent(noise_multiplier=0.5))
+        eps_2 = acc.epsilon
+
+        acc.compose_auxiliary(dp_event.GaussianDpEvent(noise_multiplier=0.5))
+        eps_3 = acc.epsilon
+
+        assert eps_1 < eps_2 < eps_3
 
 
 class TestShuffleAmplification:

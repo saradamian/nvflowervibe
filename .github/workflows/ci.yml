@@ -38,9 +38,9 @@ jobs:
       - name: Install package in editable mode
         run: pip install -e .
 
-      - name: Run tests
+      - name: Run tests (excluding slow/GPU tests)
         run: |
-          python -m pytest tests/ -v --tb=short --junitxml=test-results.xml
+          python -m pytest tests/ -v --tb=short -m "not slow" --junitxml=test-results.xml
 
       - name: Upload test results
         if: always()

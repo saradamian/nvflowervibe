@@ -50,6 +50,9 @@ try:
 except ImportError:
     HAS_PRV_ACCOUNTANT = False
 
+# Privacy auditing (no extra deps)
+from sfl.privacy.audit import PrivacyAuditor, AuditResult
+
 # Optional: homomorphic encryption (requires tenseal)
 try:
     from sfl.privacy.he import HEContext, HEConfig
@@ -82,4 +85,6 @@ __all__ = [
     "HAS_PRV_ACCOUNTANT",
     "HEContext",
     "HEConfig",
+    "PrivacyAuditor",
+    "AuditResult",
 ]

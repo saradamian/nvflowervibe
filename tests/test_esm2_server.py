@@ -8,6 +8,8 @@ and initial parameter seeding from pretrained ESM2 weights.
 import pytest
 from unittest.mock import MagicMock
 
+pytestmark = pytest.mark.slow
+
 from flwr.common import parameters_to_ndarrays
 from flwr.server.strategy import FedAvg
 

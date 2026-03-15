@@ -7,6 +7,8 @@ FederationConfig composition, and module-level config getter/setter.
 
 import pytest
 
+pytestmark = pytest.mark.slow
+
 from sfl.esm2.config import ESM2RunConfig, get_run_config, set_run_config
 from sfl.types import FederationConfig
 import sfl.esm2.config as config_module

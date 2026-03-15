@@ -32,6 +32,7 @@ from flwr.server.client_proxy import ClientProxy
 from flwr.server.strategy import FedAvg
 
 from sfl.utils.logging import get_logger
+from sfl.utils.rng import secure_rng
 
 logger = get_logger(__name__)
 
@@ -139,7 +140,7 @@ class MultiKrumFedAvg(FedAvg):
         # Projects to _KRUM_PROJECT_DIM dimensions, preserving pairwise
         # distances within (1±ε) with high probability.
         if d > _KRUM_DIM_THRESHOLD:
-            rng = np.random.RandomState(42)  # deterministic for reproducibility
+            rng = secure_rng()  # CSRNG-seeded — prevents adversary from pre-computing projection
             proj = rng.normal(
                 scale=1.0 / np.sqrt(_KRUM_PROJECT_DIM),
                 size=(d, _KRUM_PROJECT_DIM),

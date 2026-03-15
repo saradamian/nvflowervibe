@@ -270,7 +270,7 @@ class TestSecAggConfig:
     def test_custom_clipping_and_quantization(self):
         cfg = SecAggConfig(
             num_shares=5,
-            reconstruction_threshold=3,
+            reconstruction_threshold=4,  # ceil(2*5/3)=4, minimum valid
             clipping_range=16.0,
             quantization_range=2**26,
         )
@@ -312,12 +312,11 @@ class TestSecAggConfig:
         # the function was created and server_fn would be called
         assert callable(main_fn)
 
-    def test_low_threshold_warns(self):
-        """reconstruction_threshold below ceil(2n/3) should warn (C2)."""
-        # ceil(2*4/3)=3, threshold=2 < 3 should trigger logger warning
-        # Just verify it succeeds without raising
-        cfg = SecAggConfig(num_shares=4, reconstruction_threshold=2)
-        assert cfg.reconstruction_threshold == 2
+    def test_low_threshold_raises(self):
+        """reconstruction_threshold below ceil(2n/3) should raise (C2)."""
+        # ceil(2*4/3)=3, threshold=2 < 3 → must raise ValueError
+        with pytest.raises(ValueError, match="below the minimum"):
+            SecAggConfig(num_shares=4, reconstruction_threshold=2)
 
     def test_threshold_exceeds_shares_raises(self):
         """reconstruction_threshold > num_shares should raise ValueError."""
@@ -587,14 +586,22 @@ class TestLowNoiseWarning:
     """Verify warning is logged when noise_multiplier < 0.3."""
 
     def test_low_noise_warns(self):
-        """noise_multiplier=0.1 should produce a warning."""
-        import logging
+        """noise_multiplier=0.1 should produce a warning about low noise."""
         with patch("sfl.privacy.dp.logger") as mock_logger:
             dp_config = DPConfig(noise_multiplier=0.1, clipping_norm=10.0)
             wrap_strategy_with_dp(FedAvg(), dp_config)
-            mock_logger.warning.assert_called()
-            warning_msg = mock_logger.warning.call_args[0][0]
-            assert "very low" in warning_msg.lower() or "negligible" in warning_msg.lower()
+            # Find the specific low-noise warning among all warnings
+            # (other warnings like "dp-accounting not installed" may also fire)
+            low_noise_found = False
+            for call in mock_logger.warning.call_args_list:
+                msg = call[0][0].lower()
+                if "very low" in msg or "negligible" in msg:
+                    low_noise_found = True
+                    break
+            assert low_noise_found, (
+                "Expected a warning about very low / negligible noise. "
+                f"Got warnings: {[c[0][0] for c in mock_logger.warning.call_args_list]}"
+            )
 
     def test_normal_noise_no_warn(self):
         """noise_multiplier=1.0 should NOT produce a warning about low noise."""
