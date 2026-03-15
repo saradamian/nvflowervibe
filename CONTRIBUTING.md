@@ -108,7 +108,7 @@ Privacy mechanisms follow a consistent pattern:
 
 2. **Export** from `sfl.privacy.__init__` and add to `__all__`.
 
-3. **CLI flags** in both `jobs/flower_runner.py` and `jobs/esm2_runner.py`.
+3. **CLI flags** in `sfl/privacy/runner_utils.py` (shared by all runners).
 
 4. **Tests** in the appropriate test file (e.g., `tests/test_filters.py`).
 

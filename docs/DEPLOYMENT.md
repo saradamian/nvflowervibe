@@ -29,82 +29,51 @@ SimEnv runs the entire federation (server + all clients) in a single process. Th
 ### Quick Start
 
 ```bash
-# Default: 2 clients, 1 round
-python jobs/runner.py
+# Default: 2 clients, 3 rounds (Flower simulation)
+python jobs/esm2_runner.py
 
 # Custom settings
-python jobs/runner.py --num-clients 4 --num-rounds 3
-
-# With config file
-python jobs/runner.py --config config/default.yaml
+python jobs/esm2_runner.py --num-clients 4 --num-rounds 3
 
 # Verbose logging
-python jobs/runner.py --verbose
+python jobs/esm2_runner.py --verbose
 ```
-
-### How It Works
-
-1. The runner loads configuration (YAML → ENV → CLI priority)
-2. Creates an NVFlare `FlowerRecipe` pointing to the Flower app in `pyproject.toml`
-3. Creates a `SimEnv` with the specified number of clients/threads
-4. Executes the recipe — NVFlare orchestrates the Flower server and clients in-process
 
 ### Configuration
 
 All settings can be controlled via:
-- `config/default.yaml` — persistent defaults
 - Environment variables with `SFL_` prefix (e.g., `SFL_NUM_CLIENTS=4`)
 - CLI arguments (highest priority)
 
-See `python jobs/runner.py --help` for all options.
+See `python jobs/esm2_runner.py --help` for all options.
 
 ---
 
-## 2. Pure Flower Simulation (Fallback)
+## 2. NVFlare SimEnv
 
-**Best for:** Testing without NVFlare, isolating Flower-specific issues
-
-If NVFlare has compatibility issues, you can run the Flower simulation directly:
+**Best for:** Testing NVFlare integration locally without network overhead
 
 ```bash
-python jobs/flower_runner.py --num-clients 2 --num-rounds 1
+python jobs/esm2_runner.py --backend nvflare-sim --num-clients 2 --num-rounds 1
 ```
 
-This bypasses NVFlare entirely and uses Flower's `run_simulation()` API directly with Ray as a backend.
+Uses NVFlare's SimEnv to orchestrate Flower apps in-process.
 
 ---
 
-## 3. POC Mode (Multi-Process Local)
+## 3. NVFlare POC Mode (Multi-Process Local)
 
 **Best for:** Integration testing, simulating real network behavior locally
 
 POC mode runs the server and each client as separate OS processes on your local machine, communicating over localhost.
 
-### Full Workflow
-
 ```bash
-# Step 1: Prepare — creates workspace at /tmp/nvflare/poc/
-python jobs/poc_runner.py prepare --num-clients 4 --clean
-
-# Step 2: Start all services (server + clients)
-python jobs/poc_runner.py start
-
-# Step 3: Submit job via admin console
-python jobs/poc_runner.py submit
-
-# Step 4: Monitor
-python jobs/poc_runner.py status
-
-# Step 5: Stop
-python jobs/poc_runner.py stop
-
-# Step 6: Clean up
-python jobs/poc_runner.py clean
+python jobs/esm2_runner.py --backend nvflare-poc --num-clients 4 --num-rounds 3
 ```
 
-### What `prepare` Does
+### How It Works
 
-1. Calls `nvflare poc prepare -n <num_clients>` to scaffold the workspace
+1. The runner stages Flower content and generates a pyproject.toml
 2. Runs `scripts/generate_nvflare_job.py` to convert the Flower app into an NVFlare job
 3. Places the job in `/tmp/nvflare/poc/jobs/sfl-job/`
 
@@ -128,13 +97,13 @@ After preparation, the POC workspace looks like:
 
 ```bash
 # Start only the server
-python jobs/poc_runner.py start --component server
+nvflare poc start -p server
 
 # Start a specific client
-python jobs/poc_runner.py start --component site-1
+nvflare poc start -p site-1
 
 # Start admin console
-python jobs/poc_runner.py start --component admin
+nvflare poc start -p admin
 ```
 
 ### Manual Job Submission

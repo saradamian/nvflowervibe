@@ -104,9 +104,9 @@ lsof -i :8002
 lsof -i :8003
 
 # Kill conflicting processes if needed, then:
-python jobs/poc_runner.py clean
-python jobs/poc_runner.py prepare --num-clients 2 --clean
-python jobs/poc_runner.py start
+nvflare poc clean
+nvflare poc prepare -n 2
+nvflare poc start
 ```
 
 ### 6. `ImportError: cannot import name 'run_simulation' from 'flwr.simulation'`
@@ -188,10 +188,7 @@ Run the test suite to verify everything is correctly installed:
 # Run all tests (134 tests)
 python -m pytest tests/ -v
 
-# Quick smoke test — Sum demo via SimEnv
-python jobs/runner.py --num-clients 2 --num-rounds 1
-
-# ESM2 smoke test — Flower backend
+# Quick smoke test — ESM2 via Flower simulation
 python jobs/esm2_runner.py --num-clients 2 --num-rounds 1
 
 # Verify NVFlare is available
@@ -204,11 +201,8 @@ python -c "from flwr.simulation import run_simulation; print('Flower OK')"
 python -c "from sfl.esm2 import ESM2Client; print('ESM2 OK')"
 ```
 
-Expected output from sum demo:
-
-```text
-[server] round=1 client_vals=[7.0, 8.0] federated_sum=15.0
-```
+If all checks pass, the ESM2 smoke test will complete federated training
+and print per-round loss values.
 
 ---
 

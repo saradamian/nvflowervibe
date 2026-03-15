@@ -72,43 +72,17 @@ def server_fn(context: Context) -> ServerAppComponents:
     initial_params = ndarrays_to_parameters(
         [np.array([initial_param], dtype=np.float32)]
     )
-    
-    # Create strategy based on aggregation setting
-    import os
-    aggregation = os.environ.get("SFL_AGGREGATION", "fedavg").lower()
-    strategy_kwargs = dict(
-        min_fit_clients=min_fit_clients,
-        min_available_clients=num_clients,
+
+    # Build strategy: aggregation + DP + checkpoint/metrics
+    from sfl.server.dp_setup import build_strategy
+    strategy = build_strategy(
         initial_parameters=initial_params,
-        log_client_values=True,
+        num_clients=num_clients,
+        run_config=run_config,
+        min_fit_clients=min_fit_clients,
+        default_strategy_class=SumFedAvg,
+        extra_kwargs={"log_client_values": True},
     )
-
-    if aggregation == "krum":
-        from sfl.server.robust import MultiKrumFedAvg
-        strategy = MultiKrumFedAvg(
-            num_byzantine=int(os.environ.get("SFL_KRUM_BYZANTINE", "1")),
-            **strategy_kwargs,
-        )
-    elif aggregation == "trimmed-mean":
-        from sfl.server.robust import TrimmedMeanFedAvg
-        strategy = TrimmedMeanFedAvg(
-            trim_ratio=float(os.environ.get("SFL_TRIM_RATIO", "0.1")),
-            **strategy_kwargs,
-        )
-    elif aggregation == "foundation-fl":
-        from sfl.server.robust import FoundationFLFedAvg
-        strategy = FoundationFLFedAvg(
-            trust_threshold=float(os.environ.get("SFL_FFL_THRESHOLD", "0.1")),
-            weighted=os.environ.get("SFL_FFL_WEIGHTED", "true").lower() == "true",
-            allow_untrusted_reference=True,  # TODO: wire --ffl-root-data CLI flag
-            **strategy_kwargs,
-        )
-    else:
-        strategy = SumFedAvg(**strategy_kwargs)
-
-    # Wrap with DP if configured (check run_config or env vars)
-    from sfl.server.dp_setup import apply_dp_if_enabled
-    strategy = apply_dp_if_enabled(strategy, run_config, num_clients)
     
     # Create server config
     config = ServerConfig(num_rounds=num_rounds)

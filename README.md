@@ -20,7 +20,6 @@ This project provides:
 
 | Application | Description | Runner |
 |-------------|-------------|--------|
-| **Federated Sum** (demo) | Clients contribute secret values, server aggregates | `python jobs/runner.py` |
 | **ESM2 FL** (protein) | Federated fine-tuning of ESM2 protein language model | `python jobs/esm2_runner.py` |
 | **LLM FL** (language) | Federated fine-tuning of causal LMs (GPT-2, with LoRA) | `python jobs/llm_runner.py` |
 
@@ -77,10 +76,8 @@ sfl/
 │       ├── params.py           # Mixed-precision parameter downcast/upcast
 │       └── logging.py          # Rich/simple/JSON logging
 ├── jobs/
-│   ├── runner.py               # Sum demo — NVFlare SimEnv runner
 │   ├── esm2_runner.py          # ESM2 — Flower or NVFlare backend
-│   ├── flower_runner.py        # Sum demo — pure Flower fallback
-│   └── poc_runner.py           # NVFlare POC mode runner
+│   └── llm_runner.py           # LLM — Flower or NVFlare backend
 ├── tests/
 │   ├── test_client.py          # SumClient + FederationConfig tests
 │   ├── test_config.py          # Config utility tests
@@ -124,11 +121,11 @@ pip install -r requirements.txt
 ### 2. Run the Sum Demo
 
 ```bash
-# Default: 2 clients, 1 round
-python jobs/runner.py
+# Default: 2 clients, 3 rounds
+python jobs/esm2_runner.py
 
 # Custom
-python jobs/runner.py --num-clients 4 --num-rounds 3
+python jobs/esm2_runner.py --num-clients 4 --num-rounds 3
 ```
 
 Expected output:
@@ -263,56 +260,21 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full details.
 **Use for**: Quick development, algorithm testing, CI/CD
 
 ```bash
-python jobs/runner.py --num-clients 4 --num-rounds 3
+python jobs/esm2_runner.py --num-clients 4 --num-rounds 3
 ```
 
-**Pros**: Fast, simple, no setup needed  
+**Pros**: Fast, simple, no setup needed
 **Cons**: No network simulation, no security
 
 ---
 
-### Mode 2: POC Mode (Proof of Concept)
+### Mode 2: NVFlare POC Mode
 
 **Use for**: Local multi-process testing, simulating real network behavior
 
-#### Full POC Workflow
-
 ```bash
-# 1. Prepare POC environment with 4 clients
-python jobs/poc_runner.py prepare --num-clients 4 --clean
-
-# This creates /tmp/nvflare/poc/ with:
-# - server/
-# - site-1/, site-2/, site-3/, site-4/
-# - admin/
-# - jobs/sfl-job/
-
-# 2. Start all services (server + clients)
-python jobs/poc_runner.py start
-
-# Or start components individually:
-nvflare poc start -p server
-nvflare poc start -p site-1
-nvflare poc start -p admin
-
-# 3. Submit job via admin console
-python jobs/poc_runner.py submit
-
-# Or submit manually:
-nvflare poc start -p admin
-# In admin console:
-> submit_job /tmp/nvflare/poc/jobs/sfl-job/sfl-federated-sum
-> list_jobs
-> check_status server
-
-# 4. Monitor status
-python jobs/poc_runner.py status
-
-# 5. Stop services
-python jobs/poc_runner.py stop
-
-# 6. Clean up (optional)
-python jobs/poc_runner.py clean
+# Run via the NVFlare POC backend
+python jobs/esm2_runner.py --backend nvflare-poc --num-clients 4 --num-rounds 3
 ```
 
 #### Manual POC Setup (Alternative)
@@ -587,7 +549,7 @@ click>=8.1.0,<8.2.0  # Important: Click 8.2+ breaks Typer
 2. **CLI crashes with Typer trace**: Downgrade Click to < 8.2
 3. **"--format" not valid for flwr run**: Upgrade Flower to 1.17.0
 4. **POC services fail to start**: Check if ports 8002, 8003 are available
-5. **Job submission fails**: Ensure POC is prepared with `python jobs/poc_runner.py prepare`
+5. **Job submission fails**: Ensure NVFlare POC environment is prepared (`nvflare poc prepare -n 4`)
 
 ### NVFlare Commands Quick Reference
 
@@ -679,8 +641,8 @@ click>=8.1.0,<8.2.0  # Important: Click 8.2+ breaks Typer
 
 ## Recommended Progression
 
-1. **Start**: Use `SimEnv` mode (`python jobs/runner.py` or `python jobs/esm2_runner.py`) for development
-2. **Test**: Use `POC mode` (`python jobs/poc_runner.py`) for integration testing
+1. **Start**: Use Flower simulation (`python jobs/esm2_runner.py`) for development
+2. **Test**: Use NVFlare POC mode (`python jobs/esm2_runner.py --backend nvflare-poc`) for integration testing
 3. **Stage**: Use `Provision` mode for staging environment
 4. **Deploy**: Full production with TLS + monitoring
 

@@ -56,19 +56,12 @@ echo "Node: $(hostname)"
 echo "GPUs:"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || echo "  No NVIDIA GPUs"
 
-# ── Launch client ─────────────────────────────────────────────────
-# In multi-node mode, clients connect to the server via Flower's
-# gRPC channel. The ClientApp is configured identically to simulation
-# mode — the same privacy mods, same training code.
+# ── Launch Flower gRPC client ─────────────────────────────────────
 #
-# NOTE: For multi-node Flower (non-simulation), you would use:
-#   flower-client-app sfl.esm2:client_app \
-#       --server-address "$SFL_SERVER_ADDRESS" \
-#       --root-certificates "$SFL_TLS_CA_CERT"
+# Connects to the Flower server started by submit_server.sbatch.
+# The client_app reads SFL_* env vars via auto_build_client_mods()
+# to reconstruct privacy mods (DP clipping, filters, SecAgg, etc.).
 #
-# For NVFlare orchestration, this is handled by the NVFlare job
-# submission system instead.
-
 echo "Client ${SFL_CLIENT_ID} ready on $(hostname)"
 echo "Waiting for server to assign work..."
 

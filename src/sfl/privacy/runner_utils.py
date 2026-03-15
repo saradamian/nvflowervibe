@@ -141,6 +141,10 @@ def add_privacy_args(parser: argparse.ArgumentParser) -> None:
                         help="FoundationFL trust threshold -- min cosine similarity (default: 0.1)")
     parser.add_argument("--ffl-no-weighted", action="store_true",
                         help="Disable trust-weighted averaging in FoundationFL")
+    parser.add_argument("--ffl-allow-untrusted", action="store_true",
+                        help="Allow FoundationFL to fall back to client mean when no root "
+                             "update is available (NOT recommended for production — a "
+                             "Byzantine majority can manipulate the mean)")
 
     # ── Per-example DP-SGD (Opacus) ──────────────────────────────────
     parser.add_argument("--dpsgd", action="store_true",
@@ -298,8 +302,11 @@ def build_privacy_mods(args: argparse.Namespace) -> List[Any]:
         os.environ["SFL_KRUM_BYZANTINE"] = str(args.krum_byzantine)
     elif args.aggregation == "trimmed-mean":
         os.environ["SFL_TRIM_RATIO"] = str(args.trim_ratio)
+    elif args.aggregation == "foundation-fl":
         os.environ["SFL_FFL_THRESHOLD"] = str(args.ffl_threshold)
         os.environ["SFL_FFL_WEIGHTED"] = str(not args.ffl_no_weighted).lower()
+        if getattr(args, "ffl_allow_untrusted", False):
+            os.environ["SFL_FFL_ALLOW_UNTRUSTED"] = "true"
 
     # ── Per-example DP-SGD env vars ──────────────────────────────────
     if args.dpsgd:

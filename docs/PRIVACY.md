@@ -45,7 +45,7 @@ noise to the aggregate. Simpler setup — no client-side modification.
 
 ```bash
 # Sum demo
-python jobs/flower_runner.py --dp --dp-noise 0.5 --dp-clip 5.0
+python jobs/esm2_runner.py --dp --dp-noise 0.5 --dp-clip 5.0
 
 # ESM2
 python jobs/esm2_runner.py --dp --dp-noise 0.1 --dp-clip 10.0
@@ -198,7 +198,7 @@ algorithmic changes needed.
 python jobs/esm2_runner.py --dp --dp-noise 0.5 --dp-shuffle
 
 # Works with any DP mode
-python jobs/flower_runner.py --dp --dp-noise 0.5 --dp-shuffle
+python jobs/esm2_runner.py --dp --dp-noise 0.5 --dp-shuffle
 ```
 
 | Flag | Default | Description |
@@ -863,13 +863,13 @@ applied in the same position (client-side, before upload to server).
 
 ```bash
 # DP only
-python jobs/flower_runner.py --dp --dp-noise 0.5
+python jobs/esm2_runner.py --dp --dp-noise 0.5
 
 # DP + percentile filter
-python jobs/flower_runner.py --dp --percentile-privacy 10
+python jobs/esm2_runner.py --dp --percentile-privacy 10
 
 # DP + SVT
-python jobs/flower_runner.py --dp --svt-privacy --svt-epsilon 0.05
+python jobs/esm2_runner.py --dp --svt-privacy --svt-epsilon 0.05
 ```
 
 ### ESM2 — All Privacy Options

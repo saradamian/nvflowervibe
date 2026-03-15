@@ -45,34 +45,37 @@ export SFL_TLS_CA_CERT="${SFL_CERTS_DIR}/ca.pem"
 export SFL_TLS_SERVER_CERT="${SFL_CERTS_DIR}/server.pem"
 export SFL_TLS_SERVER_KEY="${SFL_CERTS_DIR}/server.key"
 
-# ── Build resume flag ─────────────────────────────────────────────
-RESUME_FLAG=""
-if [ "$SFL_RESUME" = "true" ]; then
-    RESUME_FLAG="--resume"
-    echo "Resuming from checkpoint in ${SFL_CHECKPOINT_DIR}"
-fi
+# ── Privacy/aggregation config (shared with clients via env) ──────
+export SFL_DP_ENABLED=true
+export SFL_DP_NOISE=0.8
+export SFL_DP_CLIP=5.0
+export SFL_DP_MODE=server
+export SFL_DP_ADAPTIVE_CLIP=true
+export SFL_SECAGG_ENABLED=true
+export SFL_AGGREGATION=krum
+export SFL_KRUM_BYZANTINE=1
+export SFL_CHECKPOINT_DIR
+export SFL_METRICS_DIR
+export SFL_METRICS_FORMAT=all
 
-# ── Launch server ─────────────────────────────────────────────────
-echo "Starting SFL server: ${SFL_NUM_CLIENTS} clients, ${SFL_NUM_ROUNDS} rounds"
+# ── Launch Flower gRPC server ─────────────────────────────────────
+#
+# In multi-node HPC mode, the server runs as a Flower gRPC server
+# via flower-server-app. Clients connect via flower-client-app
+# (see submit_client.sbatch).
+#
+# The server_app reads SFL_* env vars for aggregation strategy,
+# DP wrapping, checkpoint, and metrics configuration.
+#
+echo "Starting SFL Flower server: ${SFL_NUM_CLIENTS} clients, ${SFL_NUM_ROUNDS} rounds"
 echo "Model: ${SFL_MODEL}"
 echo "Checkpoint dir: ${SFL_CHECKPOINT_DIR}"
 echo "Metrics dir: ${SFL_METRICS_DIR}"
 echo "---"
 
-python jobs/esm2_runner.py \
-    --num-clients "$SFL_NUM_CLIENTS" \
-    --num-rounds "$SFL_NUM_ROUNDS" \
-    --model "$SFL_MODEL" \
-    --dp --dp-noise 0.8 --dp-clip 5.0 \
-    --dp-adaptive-clip \
-    --secagg \
-    --aggregation krum \
-    --checkpoint-dir "$SFL_CHECKPOINT_DIR" \
-    --metrics-dir "$SFL_METRICS_DIR" \
-    --metrics-format all \
-    $RESUME_FLAG \
-    --save-dir "${SFL_CHECKPOINT_DIR}/final_model" \
-    --log-format json \
+flower-server-app sfl.esm2:server_app \
+    --insecure \
+    --server-address "$SFL_SERVER_ADDRESS" \
     2>&1
 
 EXIT_CODE=$?

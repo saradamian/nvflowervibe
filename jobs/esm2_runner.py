@@ -12,6 +12,7 @@ Usage:
 """
 
 import argparse
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -97,20 +98,35 @@ Examples:
     return parser.parse_args()
 
 
-def _save_final_model(args: argparse.Namespace, logger) -> None:
-    """Save the trained model after FL completes."""
-    from sfl.esm2.model import load_model, load_tokenizer
+def _save_final_model(args: argparse.Namespace, checkpoint_dir: str, logger) -> None:
+    """Save the federated-trained model from the last checkpoint.
+
+    Loads the base model architecture, then overwrites its weights
+    with the final aggregated parameters captured by the checkpoint
+    wrapper during training.
+    """
+    from sfl.esm2.model import load_model, load_tokenizer, set_parameters
+    from sfl.utils.checkpoint import CheckpointManager
+
+    mgr = CheckpointManager(checkpoint_dir)
+    latest = mgr.load_latest()
+    if latest is None:
+        logger.warning("No checkpoint found — cannot save trained model")
+        return
+
+    round_num, parameters, _metrics = latest
 
     save_path = Path(args.save_dir)
     save_path.mkdir(parents=True, exist_ok=True)
 
     model = load_model(args.model)
+    set_parameters(model, parameters)
     tokenizer = load_tokenizer(args.model)
 
     model.save_pretrained(save_path)
     tokenizer.save_pretrained(save_path)  # type: ignore[union-attr]
 
-    logger.info(f"Model and tokenizer saved to {save_path}")
+    logger.info(f"Trained model (round {round_num}) saved to {save_path}")
 
 
 def _set_esm2_config(args: argparse.Namespace) -> None:
@@ -153,6 +169,8 @@ def _build_esm2_run_config(args: argparse.Namespace) -> dict:
 
 def run_flower(args: argparse.Namespace, logger) -> int:
     """Run ESM2 FL training using pure Flower simulation."""
+    import tempfile
+
     from flwr.client import ClientApp
     from flwr.server import ServerApp
     from flwr.simulation import run_simulation
@@ -161,6 +179,15 @@ def run_flower(args: argparse.Namespace, logger) -> int:
     from sfl.esm2.server import server_fn
 
     _set_esm2_config(args)
+
+    # When --save-dir is set, ensure checkpointing is enabled so we
+    # can capture the final aggregated weights (run_simulation returns None).
+    _ckpt_tmpdir = None
+    if args.save_dir and not os.environ.get("SFL_CHECKPOINT_DIR"):
+        _ckpt_tmpdir = tempfile.mkdtemp(prefix="sfl_ckpt_")
+        os.environ["SFL_CHECKPOINT_DIR"] = _ckpt_tmpdir
+
+    checkpoint_dir = os.environ.get("SFL_CHECKPOINT_DIR")
 
     client_mods = build_privacy_mods(args)
     validate_env_vars()
@@ -192,20 +219,24 @@ def run_flower(args: argparse.Namespace, logger) -> int:
 
     gpus_per_client = num_gpus / args.num_clients if num_gpus > 0 else 0.0
 
-    run_simulation(
-        server_app=server_app,
-        client_app=client_app,
-        num_supernodes=args.num_clients,
-        backend_config={
-            "client_resources": {
-                "num_cpus": getattr(args, "client_cpus", 1),
-                "num_gpus": gpus_per_client if not getattr(args, "no_auto_detect_gpu", False) else getattr(args, "client_gpus", 0),
-            }
-        },
-    )
+    try:
+        run_simulation(
+            server_app=server_app,
+            client_app=client_app,
+            num_supernodes=args.num_clients,
+            backend_config={
+                "client_resources": {
+                    "num_cpus": getattr(args, "client_cpus", 1),
+                    "num_gpus": gpus_per_client if not getattr(args, "no_auto_detect_gpu", False) else getattr(args, "client_gpus", 0),
+                }
+            },
+        )
 
-    if args.save_dir:
-        _save_final_model(args, logger)
+        if args.save_dir and checkpoint_dir:
+            _save_final_model(args, checkpoint_dir, logger)
+    finally:
+        if _ckpt_tmpdir:
+            shutil.rmtree(_ckpt_tmpdir, ignore_errors=True)
 
     return 0
 
