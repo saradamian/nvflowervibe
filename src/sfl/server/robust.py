@@ -268,14 +268,19 @@ class FoundationFLFedAvg(FedAvg):
 
     Args:
         root_update: Flattened reference update vector from server's
-            root dataset. If None, uses the mean of client updates
-            as a fallback (less robust but still useful).
+            root dataset. Required for meaningful defense. Without a
+            trusted reference, a Byzantine majority can shift the mean
+            toward their poisoned direction, defeating the filter.
         trust_threshold: Minimum cosine similarity to keep a client
             update. Clients below this are excluded. Range: [-1, 1].
             Default 0.1 is permissive; increase for stricter filtering.
         weighted: If True, weight each kept client's contribution by
             its cosine similarity score. If False, equal-weight the
             kept clients (binary filtering).
+        allow_untrusted_reference: If True, fall back to client mean
+            when root_update is None. This is NOT recommended for
+            production — a Byzantine majority can manipulate the mean.
+            Default False: raises ValueError if root_update is missing.
         **kwargs: Passed to FedAvg.
     """
 
@@ -284,12 +289,22 @@ class FoundationFLFedAvg(FedAvg):
         root_update: Optional[np.ndarray] = None,
         trust_threshold: float = 0.1,
         weighted: bool = True,
+        allow_untrusted_reference: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+        if root_update is None and not allow_untrusted_reference:
+            raise ValueError(
+                "FoundationFLFedAvg requires a root_update for meaningful "
+                "defense. Without a trusted reference, a Byzantine majority "
+                "can manipulate the client mean to evade filtering. Either "
+                "provide root_update or set allow_untrusted_reference=True "
+                "(NOT recommended for production)."
+            )
         self._root_update = root_update
         self.trust_threshold = trust_threshold
         self.weighted = weighted
+        self._allow_untrusted = allow_untrusted_reference
 
     def set_root_update(self, root_update: np.ndarray) -> None:
         """Set or update the server's reference update.
@@ -325,14 +340,21 @@ class FoundationFLFedAvg(FedAvg):
             )
             updates.append(flat)
 
-        # Reference vector: root update or fallback to client mean
+        # Reference vector: root update or guarded fallback to client mean
         if self._root_update is not None:
             ref = self._root_update
-        else:
+        elif self._allow_untrusted:
             ref = np.mean(updates, axis=0)
             logger.warning(
                 "[foundation-fl] No root update set — using client mean "
-                "as reference. Set root_update for stronger defense."
+                "as reference (allow_untrusted_reference=True). A Byzantine "
+                "majority can manipulate this. Set root_update ASAP."
+            )
+        else:
+            # Should not reach here (constructor validates), but be safe
+            raise RuntimeError(
+                "FoundationFLFedAvg: no root_update and "
+                "allow_untrusted_reference=False"
             )
 
         # Cosine similarity to reference

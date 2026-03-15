@@ -100,6 +100,7 @@ def server_fn(context: Context) -> ServerAppComponents:
         strategy = FoundationFLFedAvg(
             trust_threshold=float(os.environ.get("SFL_FFL_THRESHOLD", "0.1")),
             weighted=os.environ.get("SFL_FFL_WEIGHTED", "true").lower() == "true",
+            allow_untrusted_reference=True,  # TODO: wire --ffl-root-data CLI flag
             **strategy_kwargs,
         )
     else:

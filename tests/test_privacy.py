@@ -831,6 +831,95 @@ class TestPrivacyAuditor:
         assert r1.mean_cosine_sim == r2.mean_cosine_sim
 
 
+# ── Pipeline Audit Tests (S5) ─────────────────────────────────────────────
+
+
+class TestPipelineAudit:
+    """Tests for canary audit through real Flower mod chain (S5)."""
+
+    def test_noisy_pipeline_passes(self):
+        """SVT with noise should mask canaries in pipeline audit."""
+        from sfl.privacy.audit import PrivacyAuditor
+        from sfl.privacy.filters import make_svt_privacy_mod
+
+        mod = make_svt_privacy_mod(
+            fraction=0.1, epsilon=0.1, gamma=0.01, tau=0.0,
+        )
+        auditor = PrivacyAuditor(
+            noise_scale=1.0, clipping_norm=10.0,
+            detection_threshold=0.3, acceptable_rate=0.2,
+        )
+        result = auditor.run_pipeline_audit(
+            params=[np.zeros(200, dtype=np.float32)],
+            mods=[mod],
+            num_trials=50, seed=42,
+        )
+        # SVT with low epsilon adds heavy noise — canary should be masked
+        assert result.mean_cosine_sim < 0.5
+
+    def test_no_mod_preserves_canary(self):
+        """With no mods (empty chain), canary should be fully detectable."""
+        from sfl.privacy.audit import PrivacyAuditor
+
+        auditor = PrivacyAuditor(
+            noise_scale=1.0, clipping_norm=10.0,
+            detection_threshold=0.01, acceptable_rate=1.0,
+        )
+        result = auditor.run_pipeline_audit(
+            params=[np.zeros(100, dtype=np.float32)],
+            mods=[],  # no mods — canary passes through unchanged
+            num_trials=50, seed=42,
+        )
+        # With no mods the canary direction should survive
+        assert result.max_cosine_sim > 0.5
+
+    def test_compression_mod_in_pipeline(self):
+        """Gradient compression mod should reduce canary detectability."""
+        from sfl.privacy.audit import PrivacyAuditor
+        from sfl.privacy.filters import make_gradient_compression_mod
+
+        mod = make_gradient_compression_mod(
+            compression_ratio=0.05, noise_scale=0.5,
+        )
+        auditor = PrivacyAuditor(
+            noise_scale=1.0, clipping_norm=10.0,
+            detection_threshold=0.3, acceptable_rate=0.5,
+        )
+        result = auditor.run_pipeline_audit(
+            params=[np.random.randn(500).astype(np.float32)],
+            mods=[mod],
+            num_trials=30, seed=42,
+        )
+        # Compression + noise should reduce cosine similarity
+        assert result.mean_cosine_sim < 0.8
+
+    def test_chained_mods(self):
+        """Multiple mods chained should compose their privacy effects."""
+        from sfl.privacy.audit import PrivacyAuditor
+        from sfl.privacy.filters import (
+            make_percentile_privacy_mod,
+            make_gradient_compression_mod,
+        )
+
+        mod1 = make_percentile_privacy_mod(
+            percentile=50, gamma=1.0, noise_scale=0.5,
+        )
+        mod2 = make_gradient_compression_mod(
+            compression_ratio=0.1, noise_scale=0.3,
+        )
+        auditor = PrivacyAuditor(
+            noise_scale=1.0, clipping_norm=10.0,
+            detection_threshold=0.3, acceptable_rate=0.5,
+        )
+        result = auditor.run_pipeline_audit(
+            params=[np.random.randn(200).astype(np.float32)],
+            mods=[mod1, mod2],
+            num_trials=30, seed=42,
+        )
+        # Two mods stacked should be at least as good as one
+        assert result.mean_cosine_sim < 0.9
+
+
 # ── Per-Layer Clip Mod Tests (S6) ─────────────────────────────────────────
 
 

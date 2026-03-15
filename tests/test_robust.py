@@ -203,15 +203,24 @@ class TestFoundationFLFedAvg:
         aggregated = parameters_to_ndarrays(params)
         np.testing.assert_allclose(aggregated[0], [1.0, 2.0, 3.0], atol=0.01)
 
-    def test_fallback_without_root(self):
-        """Without root update, uses client mean as reference and still aggregates."""
-        # All clients similar — no root needed, mean-based reference works
+    def test_fallback_without_root_requires_flag(self):
+        """Without root_update, must set allow_untrusted_reference=True."""
+        with pytest.raises(ValueError, match="root_update"):
+            FoundationFLFedAvg(
+                root_update=None,
+                min_fit_clients=1,
+                min_available_clients=1,
+            )
+
+    def test_fallback_with_untrusted_flag(self):
+        """With allow_untrusted_reference=True, uses client mean as reference."""
         values = [[1.0, 2.0]] * 4
         results = [_make_result([v]) for v in values]
 
         strategy = FoundationFLFedAvg(
             root_update=None,
             trust_threshold=0.0,
+            allow_untrusted_reference=True,
             min_fit_clients=1,
             min_available_clients=1,
         )
@@ -259,8 +268,9 @@ class TestFoundationFLFedAvg:
 
     def test_set_root_update(self):
         """set_root_update should update the reference vector."""
+        root_initial = np.array([0.0, 0.0], dtype=np.float32)
         strategy = FoundationFLFedAvg(
-            root_update=None,
+            root_update=root_initial,
             min_fit_clients=1,
             min_available_clients=1,
         )
