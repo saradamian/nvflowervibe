@@ -52,7 +52,7 @@ def auto_build_client_mods() -> List[Any]:
     if pct is not None:
         from sfl.privacy.filters import make_percentile_privacy_mod
         mods.append(make_percentile_privacy_mod(
-            top_percentile=int(pct),
+            percentile=int(pct),
             gamma=float(os.environ.get("SFL_PERCENTILE_GAMMA", "0.01")),
             noise_scale=float(os.environ.get("SFL_PERCENTILE_NOISE", "0.0")),
             epsilon=float(os.environ.get("SFL_PERCENTILE_EPSILON", "0.0")),

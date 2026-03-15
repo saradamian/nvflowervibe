@@ -33,7 +33,7 @@ echo -e "${GREEN}========================================${NC}"
 echo ""
 
 # Run the simulation with any additional arguments passed
-python jobs/runner.py \
+python jobs/esm2_runner.py \
     --num-clients "$NUM_CLIENTS" \
     --num-rounds "$NUM_ROUNDS" \
     "$@"

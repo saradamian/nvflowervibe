@@ -57,7 +57,8 @@ dev = [
 ]
 
 [project.scripts]
-sfl-run = "jobs.runner:main"
+sfl-esm2 = "jobs.esm2_runner:main"
+sfl-llm = "jobs.llm_runner:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/sfl"]

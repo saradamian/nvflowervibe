@@ -1,13 +1,13 @@
 """
 ESM2 federated learning server.
 
-Configures a Flower server with FedAvg for aggregating ESM2 model
-parameters across federated clients.
+Configures a Flower server with the appropriate aggregation strategy
+for federated ESM2 model training, including robust aggregation,
+DP, checkpointing, and metrics.
 """
 
 from flwr.common import Context, ndarrays_to_parameters
 from flwr.server import ServerAppComponents, ServerConfig as FlowerServerConfig
-from flwr.server.strategy import FedAvg
 
 from sfl.esm2.model import DEFAULT_MODEL_NAME, get_parameters, load_model
 from sfl.utils.logging import get_logger
@@ -18,8 +18,9 @@ logger = get_logger(__name__)
 def server_fn(context: Context) -> ServerAppComponents:
     """Create and configure the ESM2 federated learning server.
 
-    Initializes a FedAvg strategy seeded with the pretrained ESM2 weights
-    so all clients start from the same checkpoint.
+    Initializes the aggregation strategy (FedAvg, Krum, TrimmedMean,
+    or FoundationFL) seeded with pretrained ESM2 weights, then wraps
+    with DP and operational layers as configured.
 
     Args:
         context: Flower context with run_config.
@@ -28,6 +29,7 @@ def server_fn(context: Context) -> ServerAppComponents:
         ServerAppComponents with strategy and config.
     """
     from sfl.esm2.config import get_run_config
+    from sfl.server.dp_setup import build_strategy
 
     cfg = get_run_config()
     run_config = context.run_config or {}
@@ -49,17 +51,14 @@ def server_fn(context: Context) -> ServerAppComponents:
     initial_params = ndarrays_to_parameters(get_parameters(model))
     del model  # free memory — clients will load their own copies
 
-    strategy = FedAvg(
+    strategy = build_strategy(
+        initial_parameters=initial_params,
+        num_clients=num_clients,
+        run_config=run_config,
+        min_fit_clients=min_fit_clients,
         fraction_fit=fraction_fit,
         fraction_evaluate=fraction_evaluate,
-        min_fit_clients=min_fit_clients,
-        min_available_clients=num_clients,
-        initial_parameters=initial_params,
     )
-
-    # Wrap with DP if configured (check run_config or env vars)
-    from sfl.server.dp_setup import apply_dp_if_enabled
-    strategy = apply_dp_if_enabled(strategy, run_config, num_clients)
 
     config = FlowerServerConfig(num_rounds=num_rounds)
 
