@@ -5,6 +5,8 @@ This module provides the server-side application for Flower,
 configured with the SumFedAvg strategy for federated sum aggregation.
 """
 
+import os
+
 import numpy as np
 from flwr.common import Context, ndarrays_to_parameters
 from flwr.server import ServerApp, ServerAppComponents, ServerConfig
@@ -84,8 +86,15 @@ def server_fn(context: Context) -> ServerAppComponents:
         extra_kwargs={"log_client_values": True},
     )
     
-    # Create server config
-    config = ServerConfig(num_rounds=num_rounds)
+    # Adjust rounds for resume
+    resume_round = int(os.environ.get("SFL_RESUME_ROUND", "0"))
+    remaining_rounds = max(1, num_rounds - resume_round)
+    if resume_round > 0:
+        logger.info(
+            "Resuming: completed %d rounds, running %d remaining (of %d total)",
+            resume_round, remaining_rounds, num_rounds,
+        )
+    config = ServerConfig(num_rounds=remaining_rounds)
     
     logger.info("Server initialized successfully")
     

@@ -6,6 +6,8 @@ for federated ESM2 model training, including robust aggregation,
 DP, checkpointing, and metrics.
 """
 
+import os
+
 from flwr.common import Context, ndarrays_to_parameters
 from flwr.server import ServerAppComponents, ServerConfig as FlowerServerConfig
 
@@ -22,6 +24,10 @@ def server_fn(context: Context) -> ServerAppComponents:
     or FoundationFL) seeded with pretrained ESM2 weights, then wraps
     with DP and operational layers as configured.
 
+    Config resolution order: run_config (Flower context) → SFL_* env vars
+    → module-level config defaults. This ensures HPC distributed mode
+    (where run_config may be empty) still picks up SLURM-exported vars.
+
     Args:
         context: Flower context with run_config.
 
@@ -34,12 +40,22 @@ def server_fn(context: Context) -> ServerAppComponents:
     cfg = get_run_config()
     run_config = context.run_config or {}
 
-    num_rounds = int(run_config.get("num-server-rounds", cfg.num_rounds))
-    num_clients = int(run_config.get("num-clients", cfg.num_clients))
-    min_fit_clients = int(run_config.get("min-fit-clients", num_clients))
-    model_name = str(run_config.get("esm2-model", cfg.model_name))
-    fraction_fit = float(run_config.get("fraction-fit", cfg.fraction_fit))
-    fraction_evaluate = float(run_config.get("fraction-evaluate", cfg.fraction_evaluate))
+    def _cfg_val(rc_key: str, env_key: str, default):
+        """Resolve config: run_config → env var → default."""
+        val = run_config.get(rc_key)
+        if val is not None:
+            return val
+        val = os.environ.get(env_key)
+        if val is not None:
+            return val
+        return default
+
+    num_rounds = int(_cfg_val("num-server-rounds", "SFL_NUM_ROUNDS", cfg.num_rounds))
+    num_clients = int(_cfg_val("num-clients", "SFL_NUM_CLIENTS", cfg.num_clients))
+    min_fit_clients = int(_cfg_val("min-fit-clients", "SFL_MIN_FIT_CLIENTS", num_clients))
+    model_name = str(_cfg_val("esm2-model", "SFL_MODEL", cfg.model_name))
+    fraction_fit = float(_cfg_val("fraction-fit", "SFL_FRACTION_FIT", cfg.fraction_fit))
+    fraction_evaluate = float(_cfg_val("fraction-evaluate", "SFL_FRACTION_EVALUATE", cfg.fraction_evaluate))
 
     logger.info(
         f"ESM2 server: model={model_name}, rounds={num_rounds}, "
@@ -60,7 +76,16 @@ def server_fn(context: Context) -> ServerAppComponents:
         fraction_evaluate=fraction_evaluate,
     )
 
-    config = FlowerServerConfig(num_rounds=num_rounds)
+    # Adjust rounds for resume — build_strategy sets SFL_RESUME_ROUND
+    # when restoring from checkpoint
+    resume_round = int(os.environ.get("SFL_RESUME_ROUND", "0"))
+    remaining_rounds = max(1, num_rounds - resume_round)
+    if resume_round > 0:
+        logger.info(
+            "Resuming: completed %d rounds, running %d remaining (of %d total)",
+            resume_round, remaining_rounds, num_rounds,
+        )
+    config = FlowerServerConfig(num_rounds=remaining_rounds)
 
     logger.info("ESM2 server initialized")
     return ServerAppComponents(strategy=strategy, config=config)

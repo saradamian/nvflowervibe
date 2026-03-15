@@ -72,9 +72,13 @@ This creates a self-signed CA + server/client certificates. For production, use 
     --certs-dir /scratch/$USER/sfl-certs
 ```
 
+Privacy/aggregation flags (`--dp`, `--secagg`, `--aggregation`, etc.) are translated to `SFL_*` env vars and propagated to **both** server and client jobs.
+
 This submits:
-1. A **server job** that starts the Flower gRPC server (mTLS when certs exist, insecure otherwise)
-2. N **client jobs** (one per SLURM node) that connect to the server
+1. A **server job** running `flower-superlink` (Fleet API + mTLS) + `flwr-serverapp` (ESM2 server logic)
+2. N **client jobs** each running `flower-supernode` (connects to SuperLink) + `flwr-clientapp` (ESM2 client logic)
+
+TLS is required by default. If certificates are missing, the scripts exit with an error. Set `--insecure` to opt out (development only).
 
 ### Step 3: Monitor
 
@@ -105,15 +109,15 @@ squeue -u $USER -n sfl-server,sfl-client
 HPC jobs have wall-time limits. SFL handles this via:
 
 1. **Round-level checkpointing** — after each round, model parameters + metrics are saved atomically
-2. **Resume from checkpoint** — use `--resume` to continue from the last saved round
-3. **Cleanup** — old checkpoints are pruned automatically (configurable via `--checkpoint-keep`)
+2. **Resume from checkpoint** — use `--resume` to continue from the last saved round. The server restores weights from the latest checkpoint **and** adjusts the remaining round count (e.g., if 15 of 50 rounds completed, it runs 35 more).
+3. **Cleanup** — old checkpoints are pruned automatically (keeps last 3)
 
 ```bash
 # Initial run (may be killed at wall-time)
-sbatch submit_server.sbatch  # runs for 4 hours
+./examples/hpc/launch_federation.sh --num-clients 4 --num-rounds 50
 
 # Resume from where it stopped
-sbatch submit_server.sbatch --export=SFL_RESUME=true
+./examples/hpc/launch_federation.sh --num-clients 4 --num-rounds 50 --resume
 ```
 
 ## Heterogeneous Clusters
