@@ -10,12 +10,18 @@
 #
 # SFL Federated Learning Client — SLURM Job Script
 #
-# Connects to the FL server and participates in training.
+# Launches Flower SuperNode + ClientApp on one node.
+# Connects to the SuperLink started by submit_server.sbatch.
+#
+# Flower 1.17.0 multi-node architecture:
+#   SuperNode  — per-client node (connects to SuperLink's Fleet API)
+#   ClientApp  — runs client_fn logic (connects to SuperNode locally)
+#
 # Submit as an array job: sbatch --array=0-7 submit_client.sbatch
 #
 # Usage:
 #   sbatch --array=0-3 submit_client.sbatch
-#   sbatch --array=0-7 --export=ALL,SFL_SERVER_ADDRESS=server01:8443 submit_client.sbatch
+#   sbatch --array=0-7 --export=ALL,SFL_SERVER_ADDRESS=server01:9092 submit_client.sbatch
 
 # ── Configuration ──────────────────────────────────────────────────
 SFL_CERTS_DIR="${SFL_CERTS_DIR:-/scratch/$USER/sfl-certs}"
@@ -44,43 +50,65 @@ if [ ! -f "$SERVER_ADDR_FILE" ]; then
 fi
 
 SFL_SERVER_ADDRESS="${SFL_SERVER_ADDRESS:-$(cat "$SERVER_ADDR_FILE")}"
-echo "Connecting to server at ${SFL_SERVER_ADDRESS} as client ${SFL_CLIENT_ID}"
-
-# ── mTLS certificates ─────────────────────────────────────────────
-export SFL_TLS_CA_CERT="${SFL_CERTS_DIR}/ca.pem"
-export SFL_TLS_CLIENT_CERT="${SFL_CERTS_DIR}/client.pem"
-export SFL_TLS_CLIENT_KEY="${SFL_CERTS_DIR}/client.key"
+echo "Connecting to SuperLink at ${SFL_SERVER_ADDRESS} as client ${SFL_CLIENT_ID}"
 
 # ── GPU diagnostics ───────────────────────────────────────────────
 echo "Node: $(hostname)"
 echo "GPUs:"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || echo "  No NVIDIA GPUs"
 
-# ── Launch Flower gRPC client ─────────────────────────────────────
-#
-# Connects to the Flower server started by submit_server.sbatch.
-# The client_app reads SFL_* env vars via auto_build_client_mods()
-# to reconstruct privacy mods (DP clipping, filters, SecAgg, etc.).
-#
-echo "Client ${SFL_CLIENT_ID} ready on $(hostname)"
+# ── Build TLS flags ──────────────────────────────────────────────
+# TLS is required by default. Use SFL_INSECURE=true to opt out (dev only).
+SFL_TLS_CA_CERT="${SFL_CERTS_DIR}/ca.pem"
 
-# Build TLS flags — use mTLS when certs exist, --insecure otherwise
-TLS_FLAGS=""
-if [ -f "$SFL_TLS_CA_CERT" ] && [ -f "$SFL_TLS_CLIENT_CERT" ] && [ -f "$SFL_TLS_CLIENT_KEY" ]; then
-    TLS_FLAGS="--root-certificates $SFL_TLS_CA_CERT"
-    echo "TLS: mTLS enabled"
+SUPERNODE_TLS_FLAGS=""
+if [ "${SFL_INSECURE:-false}" = "true" ]; then
+    SUPERNODE_TLS_FLAGS="--insecure"
+    echo "WARNING: Running insecure (SFL_INSECURE=true) — dev only"
+elif [ -f "$SFL_TLS_CA_CERT" ]; then
+    SUPERNODE_TLS_FLAGS="--root-certificates $SFL_TLS_CA_CERT"
+    echo "TLS: enabled (root cert: $SFL_TLS_CA_CERT)"
 else
-    TLS_FLAGS="--insecure"
-    echo "WARNING: TLS certificates not found — running insecure (dev only)"
+    echo "ERROR: TLS CA certificate not found at ${SFL_TLS_CA_CERT} and SFL_INSECURE is not set."
+    echo "  Run: ./examples/hpc/generate_certs.sh ${SFL_CERTS_DIR}"
+    echo "  Or set SFL_INSECURE=true for development (NOT recommended)."
+    exit 1
 fi
 
-echo "Waiting for server to assign work..."
+# ── Launch SuperNode (background) ────────────────────────────────
+# SuperNode connects to the SuperLink's Fleet API and manages the
+# local ClientApp lifecycle.
+echo "Client ${SFL_CLIENT_ID} starting on $(hostname)"
 
-flower-client-app sfl.esm2:client_app \
-    --server-address "$SFL_SERVER_ADDRESS" \
-    $TLS_FLAGS \
-    2>&1
+flower-supernode \
+    $SUPERNODE_TLS_FLAGS \
+    --superlink "$SFL_SERVER_ADDRESS" \
+    --node-config "partition-id=${SFL_CLIENT_ID}" \
+    --isolation process \
+    2>&1 | sed 's/^/[supernode] /' &
+SUPERNODE_PID=$!
+
+# Wait for SuperNode to start
+sleep 3
+if ! kill -0 $SUPERNODE_PID 2>/dev/null; then
+    echo "ERROR: SuperNode failed to start"
+    exit 1
+fi
+echo "SuperNode started (PID ${SUPERNODE_PID})"
+
+# ── Launch ClientApp (foreground) ────────────────────────────────
+# ClientApp connects to SuperNode's ClientAppIo API (localhost:9094)
+# and runs the ESM2 client_fn. SFL_* env vars are read by
+# auto_build_client_mods() to reconstruct privacy mods.
+flwr-clientapp sfl.esm2:client_app \
+    --insecure \
+    2>&1 | sed 's/^/[clientapp] /'
 
 EXIT_CODE=$?
+
+# Clean up SuperNode
+kill $SUPERNODE_PID 2>/dev/null
+wait $SUPERNODE_PID 2>/dev/null
+
 echo "Client ${SFL_CLIENT_ID} exited with code ${EXIT_CODE}"
 exit $EXIT_CODE

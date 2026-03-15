@@ -136,6 +136,8 @@ def _maybe_resume_from_checkpoint(initial_parameters: Parameters) -> Parameters:
 
     round_num, parameters, _metrics = latest
     logger.info("Resuming from checkpoint round %d", round_num)
+    # Store completed round so server_fn can adjust num_rounds
+    os.environ["SFL_RESUME_ROUND"] = str(round_num)
     return ndarrays_to_parameters(parameters)
 
 
